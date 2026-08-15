@@ -327,6 +327,44 @@ describe('discoverRolloutSessions (codex / traex)', () => {
     expect(out[0]?.title).toBe('the first prompt typed by the user');
   });
 
+  it('does not discover a rollout whose only user item is Codex goal context', async () => {
+    writeRollout('2026/08/15', 'rollout-codex-goal-context-only.jsonl', [
+      { type: 'session_meta', payload: { id: 'sid-codex-goal-context-only', cwd: '/root/goal-project' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<codex_internal_context source="goal">\nContinue pursuing the active goal.\n</codex_internal_context>',
+          }],
+        },
+      },
+    ]);
+
+    expect(await discoverRolloutSessions(sessionsRoot, 10)).toEqual([]);
+  });
+
+  it('does not discover a rollout whose only user item is an aborted-turn marker', async () => {
+    writeRollout('2026/08/15', 'rollout-codex-turn-aborted-only.jsonl', [
+      { type: 'session_meta', payload: { id: 'sid-codex-turn-aborted-only', cwd: '/root/aborted-project' } },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: '<turn_aborted>\nThe previous turn was interrupted by the user.\n</turn_aborted>',
+          }],
+        },
+      },
+    ]);
+
+    expect(await discoverRolloutSessions(sessionsRoot, 10)).toEqual([]);
+  });
+
   it('drops botmux-origin rollouts when the injected prompt exists only as a response_item', async () => {
     writeRollout('2026/08/16', 'rollout-codex-botmux-response-item.jsonl', [
       { type: 'session_meta', payload: { id: 'sid-codex-botmux-response-item', cwd: '/root/botmux-project' } },
@@ -345,7 +383,7 @@ describe('discoverRolloutSessions (codex / traex)', () => {
           role: 'user',
           content: [{
             type: 'input_text',
-            text: '<botmux_routing>\nreply with botmux send\n</botmux_routing>\n\n<session_id>session-123</session_id>\n\n<role context="team" chat_id="oc_team">\nreviewer\n</role>\n\n<user_message>\nfix the parser\n</user_message>',
+            text: '<botmux_routing>\nreply with botmux send\n</botmux_routing>\n\n<botmux_builtin_skills>\nuse the built-in skills\n</botmux_builtin_skills>\n\n<identity>\n  <name>Codex Bot</name>\n  <open_id>ou_bot</open_id>\n</identity>\n\n<session_id>session-123</session_id>\n\n<user_message>\nfix the parser\n</user_message>',
           }],
         },
       },

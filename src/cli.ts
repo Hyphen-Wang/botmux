@@ -144,6 +144,24 @@ import {
 } from './core/shutdown-budgets.js';
 import { describeSendFailure, dispatchPrimaryMessage, findStdinAliasAttachment, normalizeInteractiveCardInput, sendFileAttachments, sendVideoAttachments, shouldSendAsPureVideo, validateSlashSend, validateVideoAttachments } from './cli/send-dispatch.js';
 import { buildCardPatchSuccessOutput, CARD_COMMAND_USAGE, CARD_PATCH_USAGE, cardPatchArgsWantHelp, executeCardPatch, parseCardPatchArgs, readCardPatchInput } from './cli/card-dispatch.js';
+import {
+  buildCardStreamSuccessOutput,
+  CARD_STREAM_USAGE,
+  cardMessageRouteFromDetail,
+  cardStreamArgsWantHelp,
+  executeCardStreamFinish,
+  executeCardStreamOpen,
+  executeCardStreamReanchor,
+  executeCardStreamSnapshot,
+  executeCardStreamWrite,
+  mapCardStreamError,
+  parseCardStreamArgs,
+  readCardStreamContent,
+} from './cli/card-stream-dispatch.js';
+import { parseCardRuntimeStatusArgs } from './cli/card-runtime-status-dispatch.js';
+import { readCardStreamUsageSnapshot } from './cli/card-stream-usage.js';
+import { CardStreamStore } from './services/card-stream-store.js';
+import { CardRuntimeStatusBridge } from './services/card-runtime-status-bridge.js';
 import { dispatchDeferredTopicSend, reusableDeferredTopicRoot, type DeferredScheduleRunData } from './cli/deferred-topic-send.js';
 import { readDeferredTopicBinding } from './core/deferred-topic-binding.js';
 import { resolveDaemonEnv } from './cli/daemon-lifecycle-env.js';
@@ -6165,6 +6183,8 @@ botmux v${getVersion()} — IM ↔ AI 编程 CLI 桥接
                        原地更新之前用 send --card-file/--card-json 发出的自定义卡片
                        （不发新消息、不换群/话题）；messageId 取自 send 成功输出的 .messageId，
                        卡片安全校验与 send 相同；[--session-id <sid>] 可手动指定会话
+  card stream open|write|snapshot|reanchor|bind-runtime|unbind-runtime|finish ...
+                       CardKit 原生文本流式更新与 daemon 运行状态绑定；详见 botmux card stream --help
   bots list                            列出当前群聊中的机器人（含 open_id）
   bots invite --chat <chatId> --team <id> --agent <appId>...
                                        往「已存在的团队群」补人：把同团队、已 opt-in 的 agent + 各自 owner 一起拉进；
@@ -9940,7 +9960,7 @@ async function cmdSend(rest: string[]): Promise<void> {
   }
 }
 
-// ─── Card subcommand (patch a previously-sent custom card in place) ───
+// ─── Card subcommands (whole-card patch + native CardKit streaming) ───
 
 async function cmdCard(rest: string[]): Promise<void> {
   const sub = rest[0] ?? '';
@@ -9948,13 +9968,233 @@ async function cmdCard(rest: string[]): Promise<void> {
     console.log(CARD_COMMAND_USAGE);
     return;
   }
-  if (sub !== 'patch') {
+  if (sub !== 'patch' && sub !== 'stream') {
     console.error(
       `未知 card 子命令: ${sub}\n` +
-      `用法: botmux card patch --message-id <om_xxx> (--card-file <path> | --card-json <json>) [--session-id <sid>]`,
+      '可用: patch | stream',
     );
     process.exit(2);
   }
+
+  if (sub === 'stream') {
+    const args = rest.slice(1);
+    if (args.length === 0 || cardStreamArgsWantHelp(args)) {
+      console.log(CARD_STREAM_USAGE);
+      return;
+    }
+    assertTurnTransportOrExit('card stream');
+    await registerSelfFromCredFile();
+
+    if (args[0] === 'bind-runtime' || args[0] === 'unbind-runtime') {
+      const runtimeParsed = parseCardRuntimeStatusArgs(args);
+      if (!runtimeParsed.ok) {
+        console.error(`botmux card stream: ${runtimeParsed.error}`);
+        process.exit(2);
+      }
+      try {
+        const { sid, larkAppId, session } = await resolveSessionAppId(runtimeParsed.sessionId);
+        assertSessionTransportOrExit({ chatId: session.chatId, larkAppId }, 'card stream runtime');
+        const { patchCardStreamElement, updateCardStreamElementContent } = await import('./im/lark/client.js');
+        const streamStore = new CardStreamStore(resolveDataDir());
+        const runtimeBridge = new CardRuntimeStatusBridge(resolveDataDir(), streamStore, {
+          updateContent: input => updateCardStreamElementContent(
+            input.larkAppId,
+            input.cardId,
+            input.elementId,
+            input.content,
+            input.sequence,
+            input.uuid,
+          ),
+          patchElement: input => patchCardStreamElement(
+            input.larkAppId,
+            input.cardId,
+            input.elementId,
+            input.partialElement,
+            input.sequence,
+            input.uuid,
+          ),
+        });
+        const authority = { sessionId: sid, larkAppId, chatId: session.chatId };
+        if (runtimeParsed.operation === 'bind-runtime') {
+          await runtimeBridge.bind({
+            streamId: runtimeParsed.streamId,
+            authority,
+            statusElementId: runtimeParsed.statusElementId,
+            imageElementId: runtimeParsed.imageElementId,
+            activeImageKey: runtimeParsed.activeImageKey,
+            inactiveImageKey: runtimeParsed.inactiveImageKey,
+            labels: runtimeParsed.labels,
+          });
+          console.log(JSON.stringify({
+            success: true,
+            operation: 'bind-runtime',
+            streamId: runtimeParsed.streamId,
+            sessionId: sid,
+          }));
+        } else {
+          const unbound = await runtimeBridge.unbind(runtimeParsed.streamId, authority);
+          console.log(JSON.stringify({
+            success: true,
+            operation: 'unbind-runtime',
+            streamId: runtimeParsed.streamId,
+            sessionId: sid,
+            unbound,
+          }));
+        }
+      } catch (err) {
+        const mapped = mapCardStreamError(err);
+        console.error(`botmux card stream: ${mapped.error}`);
+        process.exit(mapped.exitCode);
+      }
+      return;
+    }
+
+    const parsed = parseCardStreamArgs(args);
+    if (!parsed.ok) {
+      console.error(`botmux card stream: ${parsed.error}`);
+      process.exit(2);
+    }
+    const contentInput = parsed.operation === 'write'
+      ? readCardStreamContent(parsed.content, parsed.contentFile)
+      : undefined;
+    if (contentInput && !contentInput.ok) {
+      console.error(`botmux card stream: ${contentInput.error}`);
+      process.exit(contentInput.exitCode);
+    }
+
+    const { sid, larkAppId, session } = await resolveSessionAppId(parsed.sessionId);
+    assertSessionTransportOrExit({ chatId: session.chatId, larkAppId }, 'card stream');
+    const store = new CardStreamStore(resolveDataDir());
+    const authority = { sessionId: sid, larkAppId, chatId: session.chatId };
+    const currentTurnId = session.currentReplyTarget?.turnId ?? session.quoteTargetId;
+
+    if (parsed.operation === 'snapshot') {
+      const outcome = await executeCardStreamSnapshot({ store }, {
+        streamId: parsed.streamId,
+        authority,
+        readUsage: () => readCardStreamUsageSnapshot(session, larkAppId),
+        currentTurnId,
+      });
+      if (!outcome.ok) {
+        console.error(`botmux card stream: ${outcome.error}`);
+        process.exit(outcome.exitCode);
+      }
+      console.log(buildCardStreamSuccessOutput(outcome, sid));
+      return;
+    }
+
+    const {
+      deleteMessage,
+      getMessageDetail,
+      patchCardStreamElement,
+      resolveCardKitId,
+      updateCardStreamElementContent,
+      updateCardStreamingSettings,
+    } = await import('./im/lark/client.js');
+    const runtimeBridge = new CardRuntimeStatusBridge(resolveDataDir(), store, {
+      updateContent: input => updateCardStreamElementContent(
+        input.larkAppId,
+        input.cardId,
+        input.elementId,
+        input.content,
+        input.sequence,
+        input.uuid,
+      ),
+      patchElement: input => patchCardStreamElement(
+        input.larkAppId,
+        input.cardId,
+        input.elementId,
+        input.partialElement,
+        input.sequence,
+        input.uuid,
+      ),
+    });
+    const deps = {
+      store,
+      getMessageRoute: async (appId: string, messageId: string) =>
+        cardMessageRouteFromDetail(
+          await getMessageDetail(appId, messageId, { userCardContent: false }),
+          messageId,
+        ),
+      resolveCardId: resolveCardKitId,
+      updateSettings: async (input: {
+        larkAppId: string;
+        cardId: string;
+        streamingMode: boolean;
+        sequence: number;
+        uuid: string;
+        summary?: string;
+        print?: { frequencyMs: number; step: number; strategy: 'fast' };
+      }) => updateCardStreamingSettings(input.larkAppId, input.cardId, input),
+      updateElementContent: async (input: {
+        larkAppId: string;
+        cardId: string;
+        elementId: string;
+        content: string;
+        sequence: number;
+        uuid: string;
+      }) => updateCardStreamElementContent(
+        input.larkAppId,
+        input.cardId,
+        input.elementId,
+        input.content,
+        input.sequence,
+        input.uuid,
+      ),
+      moveRuntimeBinding: (previousStreamId: string, currentStreamId: string) =>
+        runtimeBridge.reanchor(previousStreamId, currentStreamId, authority),
+      deleteMessage,
+    };
+    const outcome = parsed.operation === 'open'
+      ? await executeCardStreamOpen(deps, {
+          binding: {
+            ...authority,
+            messageId: parsed.messageId,
+            ...(currentTurnId ? { anchorTurnId: currentTurnId } : {}),
+          },
+          sessionRoute: {
+            chatId: session.chatId,
+            rootMessageId: session.rootMessageId,
+            scope: session.scope,
+          },
+          summary: parsed.summary,
+        })
+      : parsed.operation === 'reanchor'
+        ? await executeCardStreamReanchor(deps, {
+            streamId: parsed.streamId,
+            authority,
+            nextBinding: {
+              ...authority,
+              messageId: parsed.messageId,
+              ...(currentTurnId ? { anchorTurnId: currentTurnId } : {}),
+            },
+            sessionRoute: {
+              chatId: session.chatId,
+              rootMessageId: session.rootMessageId,
+              scope: session.scope,
+            },
+            summary: parsed.summary,
+          })
+      : parsed.operation === 'write'
+        ? await executeCardStreamWrite(deps, {
+            streamId: parsed.streamId,
+            authority,
+            elementId: parsed.elementId,
+            content: contentInput!.content,
+          })
+        : await executeCardStreamFinish(deps, {
+            streamId: parsed.streamId,
+            authority,
+            summary: parsed.summary,
+          });
+    if (!outcome.ok) {
+      console.error(`botmux card stream: ${outcome.error}`);
+      process.exit(outcome.exitCode);
+    }
+    console.log(buildCardStreamSuccessOutput(outcome, sid));
+    return;
+  }
+
   const args = rest.slice(1);
   // Help wins over the missing-arg validation and the transport gates below.
   if (cardPatchArgsWantHelp(args)) {

@@ -56,7 +56,7 @@ import {
 } from './core/supervisor-shutdown-protocol.js';
 import { readSupervisorProcessStartIdentity } from './core/process-start-identity.js';
 import { statSync } from 'node:fs';
-import { addReaction, deleteMessage, getChatContext, getChatMode, getChatNameAndMode, getMessageChatId, listChatMemberOpenIds, MessageWithdrawnError, replyMessage, resolveAllowedUsersWithMap, sendMessage, sendUserMessage, updateMessage, type EntryResolveStatus } from './im/lark/client.js';
+import { addReaction, deleteMessage, getChatContext, getChatMode, getChatNameAndMode, getMessageChatId, listChatMemberOpenIds, MessageWithdrawnError, patchCardStreamElement, replyMessage, resolveAllowedUsersWithMap, sendMessage, sendUserMessage, updateCardStreamElementContent, updateMessage, type EntryResolveStatus } from './im/lark/client.js';
 import { resolveGroupJoinPrompt, waitForAllowedUserInChat } from './core/auto-start.js';
 import {
   loadBotConfigAtIndex,
@@ -85,6 +85,8 @@ import {
 import { setDisplayNameRefresher, findConfigField, applyConfigField } from './services/bot-config-store.js';
 import { registerPinStreamingCardChangeHandler } from './services/pin-streaming-card-change.js';
 import { getSkillFeedbackStore } from './services/skill-feedback-store.js';
+import { CardStreamStore } from './services/card-stream-store.js';
+import { CardRuntimeStatusBridge } from './services/card-runtime-status-bridge.js';
 import { enqueueTurnTerminal, drainTurnTerminalQueue } from './services/turn-completion-events.js';
 import { FeedbackWebhookSecretStore, startFeedbackWebhookDispatcher } from './services/feedback-webhook-dispatcher.js';
 import { resolveRegularGroupMode } from './services/chat-reply-mode-store.js';
@@ -21946,6 +21948,28 @@ export async function startDaemon(botIndex?: number): Promise<void> {
       );
     }
   };
+  const cardRuntimeStatusBridge = new CardRuntimeStatusBridge(
+    config.session.dataDir,
+    new CardStreamStore(config.session.dataDir),
+    {
+      updateContent: input => updateCardStreamElementContent(
+        input.larkAppId,
+        input.cardId,
+        input.elementId,
+        input.content,
+        input.sequence,
+        input.uuid,
+      ),
+      patchElement: input => patchCardStreamElement(
+        input.larkAppId,
+        input.cardId,
+        input.elementId,
+        input.partialElement,
+        input.sequence,
+        input.uuid,
+      ),
+    },
+  );
   // Initialise worker pool with daemon callbacks
   initWorkerPool({
     sessionReply,
@@ -21977,6 +22001,13 @@ export async function startDaemon(botIndex?: number): Promise<void> {
       });
     },
     enforceLiveSessionCap: () => enforceLiveSessionCap('session_change'),
+    onScreenStatus(ds, context) {
+      return cardRuntimeStatusBridge.publish({
+        sessionId: ds.session.sessionId,
+        larkAppId: ds.larkAppId,
+        status: context.status,
+      }).then(() => undefined);
+    },
     onQueuedActivationSubmitted,
     async onTurnTerminal(ds, terminal, context) {
       // VC reconcile first: it is in-memory and latency-sensitive, and must not

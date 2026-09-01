@@ -270,7 +270,7 @@ JSON 格式，与 \`botmux history\` 的单条消息字段一致，并附带 \`r
 
 export const SEND_SKILL = `---
 name: botmux-send
-description: 向飞书话题发送消息。用户在飞书上阅读看不到终端输出，需要用户看到的内容（关键结论、方案、最终结果、进度更新）必须通过 botmux send 发送。支持图文混排（图片穿插在 markdown 正文中）、文本、图片/文件附件、原始 interactive 卡片 JSON（发出后可用 botmux card patch 按 messageId 原地更新）、@mention。**当你自主执行任务撞到只有人类才能解除的硬阻碍、无法靠自己继续时（需要授权/凭证、要人拍不可逆决策、缺访问权限、需求歧义自己定不了），回消息时带 \`--attention\` 举手**——既把"我卡在哪、需要你做什么"发给用户，又把本会话标进 dashboard「需要你」列，让人一眼看到哪个任务卡住、为什么卡。
+description: 向飞书话题发送消息。用户在飞书上阅读看不到终端输出，需要用户看到的内容（关键结论、方案、最终结果、进度更新）必须通过 botmux send 发送。支持图文混排（图片穿插在 markdown 正文中）、文本、图片/文件附件、原始 interactive 卡片 JSON（发出后可用 botmux card patch 原地更新，或用 botmux card stream 做原生打字机流式更新）、@mention。**当你自主执行任务撞到只有人类才能解除的硬阻碍、无法靠自己继续时（需要授权/凭证、要人拍不可逆决策、缺访问权限、需求歧义自己定不了），回消息时带 \`--attention\` 举手**——既把"我卡在哪、需要你做什么"发给用户，又把本会话标进 dashboard「需要你」列，让人一眼看到哪个任务卡住、为什么卡。
 ---
 
 # botmux-send — 向飞书话题发送消息
@@ -473,6 +473,24 @@ botmux card patch --message-id "$MID" --card-json '{"schema":"2.0","body":{"dire
 安全边界与上面的 \`send --card-file/--card-json\` **完全相同**：只允许纯展示元素 + open_url 按钮，任何回调控件都会被拒绝。Bot 身份从会话上下文解析，不提供 \`--bot\` 类显式指定；飞书本身也禁止跨应用 patch 别人的卡片。
 
 成功 stdout 一行 JSON \`{"success":true,"messageId":"om_xxx","sessionId":"..."}\`。参数错误（缺 \`--message-id\`、卡片输入未二选一、messageId 非 \`om_\` 开头、含回调控件、JSON 非法）exit 2；\`--card-file\` 不存在、消息已撤回、飞书 API 报错 exit 1，stderr 透出原因。
+
+#### 原生打字机流式更新：\`botmux card stream\`
+
+需要连续输出感时，不要高频整卡 \`patch\`。先发送 Card 2.0 卡片，并给需要流式写入的 \`markdown\` 或 \`plain_text\` 组件设置唯一 \`element_id\`（字母开头、最多 20 字符），然后用 CardKit 原生流：
+
+\`\`\`bash
+MID=$(botmux send --card-file /tmp/progress.json --no-mention | jq -r .messageId)
+OPEN=$(botmux card stream open --message-id "$MID" --summary "执行中")
+STREAM_ID=$(printf '%s' "$OPEN" | jq -r .streamId)
+
+# write 传该 element 的完整最新内容；新增后缀由飞书原生打字机动画呈现
+botmux card stream write --stream-id "$STREAM_ID" --element-id work_log --content-file /tmp/work-log.md
+botmux card stream finish --stream-id "$STREAM_ID" --summary "已完成"
+\`\`\`
+
+如果同一任务需要跟随较新的用户输入，先用当前完整卡片内容发出新卡，再调用 \`stream reanchor --stream-id <旧流> --message-id <新卡>\`。Botmux 会在新流就绪后拒绝旧流的迟到写入、迁移已绑定的运行状态，并尽力撤回旧消息。成功输出会返回新的 \`messageId\` / \`streamId\`，调用方必须立即更新自己的持久化状态。是否跟随新输入由调用 Skill 决定，Core 不自动撤回任意卡片。
+
+多行内容也可用 \`--content-file -\` 从 stdin 读取。核心命令只负责 transport、会话归属、顺序与幂等；阶段、公开工作摘要、工具事件和 UI 语义应由机器人自己的 Skill 决定。不要把模型私有原始 CoT 写进卡片，只展示可公开、可验证的工作摘要。
 
 ### @mention 其他机器人协作
 

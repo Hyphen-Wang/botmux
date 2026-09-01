@@ -592,6 +592,13 @@ export interface WorkerPoolCallbacks {
   /** Re-check the per-bot resident-session cap after a process starts or an
    * over-cap busy session becomes idle. Optional for unit-test callers. */
   enforceLiveSessionCap?: () => void;
+  /** Publish the worker's latest coarse runtime status to an optional external
+   * card sink. Called on every accepted screen update; the sink owns dedupe and
+   * backpressure so the worker path stays non-blocking. */
+  onScreenStatus?: (
+    ds: DaemonSession,
+    context: { prevStatus: StreamStatus | undefined; status: ScreenStatus; turnId?: string },
+  ) => void | Promise<void>;
   /** Durable consumers subscribe to transcript-backed turn completion here.
    *  Optional so ordinary sessions and tests keep their existing behavior. */
   onTurnTerminal?: (
@@ -11929,6 +11936,18 @@ function setupWorkerHandlers(
         ds.lastScreenContent = msg.content;
         ds.lastScreenStatus = resolveUsageAwareScreenStatus(ds, msg.status, msg.usageLimit);
         bumpStreamCardStatusRevision(ds);
+        try {
+          const published = cb.onScreenStatus?.(ds, {
+            prevStatus,
+            status: ds.lastScreenStatus as ScreenStatus,
+            turnId: msg.turnId,
+          });
+          void Promise.resolve(published).catch((err: any) => {
+            logger.debug(`[${t}] runtime status card bridge failed: ${err?.message ?? err}`);
+          });
+        } catch (err: any) {
+          logger.debug(`[${t}] runtime status card bridge threw: ${err?.message ?? err}`);
+        }
         // A suspend that arrived mid-turn parked itself here. Defer until this
         // screen_update has finished using process state — suspendWorker nulls
         // `worker` + `lastScreenStatus`, which everything below still reads

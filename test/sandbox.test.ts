@@ -264,6 +264,39 @@ describe('validateRelayRequest', () => {
     }
   });
 
+  it('allows only fixed final status headers through the sandbox relay', () => {
+    expect(validateRelayRequest({
+      contentFile: 'c.content',
+      flags: ['--response-kind', 'final', '--final-status', 'completed'],
+    })).toMatchObject({
+      ok: true,
+      value: { flags: ['--response-kind', 'final', '--final-status', 'completed'] },
+    });
+    expect(validateRelayRequest({
+      contentFile: 'c.content',
+      flags: ['--final-status', 'green'],
+    })).toMatchObject({ ok: false, error: 'flag --final-status must be completed, failed, or interrupted' });
+  });
+
+  it('allows only bounded JSON-object sedimentation candidates through the sandbox relay', () => {
+    const candidate = JSON.stringify({ summaries: ['rule'] });
+    expect(validateRelayRequest({
+      contentFile: 'c.content',
+      flags: ['--response-kind', 'final', '--sedimentation-proposal-json', candidate],
+    })).toMatchObject({
+      ok: true,
+      value: { flags: ['--response-kind', 'final', '--sedimentation-proposal-json', candidate] },
+    });
+    expect(validateRelayRequest({
+      contentFile: 'c.content',
+      flags: ['--sedimentation-proposal-json', '[]'],
+    })).toMatchObject({ ok: false, error: 'flag --sedimentation-proposal-json must be a JSON object' });
+    expect(validateRelayRequest({
+      contentFile: 'c.content',
+      flags: ['--sedimentation-proposal-json', '{bad'],
+    })).toMatchObject({ ok: false, error: 'flag --sedimentation-proposal-json must be a JSON object' });
+  });
+
   it('accepts a custom card file as a plain outbox basename', () => {
     const r = validateRelayRequest({
       contentFile: 'c.content',

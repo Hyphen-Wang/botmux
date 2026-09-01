@@ -82,6 +82,11 @@ import {
   isV3DistillationAction,
   type V3DistillationCardHandlerDeps,
 } from './v3-distillation-card-handler.js';
+import {
+  handleSedimentationCardAction,
+  isSedimentationCardAction,
+  type SedimentationCardHandlerDeps,
+} from './sedimentation-proposal-card.js';
 import { handleAskCardAction, isAskCardAction } from './ask-card.js';
 import { createCliAdapterSync } from '../../adapters/cli/registry.js';
 import { buildClosedSessionCard } from '../../core/closed-session-card.js';
@@ -142,6 +147,8 @@ export interface CardHandlerDeps {
   v3RunSaveDeps?: V3RunSaveCardHandlerDeps;
   /** v3 参数蒸馏提案的接受/拒绝动作。 */
   v3DistillationDeps?: V3DistillationCardHandlerDeps;
+  /** 任务完成后的沉淀候选查看与 MR 授权动作。 */
+  sedimentationDeps?: SedimentationCardHandlerDeps;
   /** VC meeting invite/consumer card actions. Implemented in daemon to
    *  keep meeting sessions, tombstones, and listener-group state single-owned. */
   vcMeetingCardAction?: (data: CardActionData, larkAppId: string) => Promise<any>;
@@ -1358,12 +1365,15 @@ export async function handleCardAction(data: CardActionData, deps: CardHandlerDe
     return handleAskCardAction(data);
   }
 
-  if (['feedback_submit', 'feedback_reason', 'feedback_comment', 'skill_feedback_submit'].includes(value?.action ?? '') && larkAppId) {
+  if (['feedback_select', 'feedback_reason_select', 'feedback_finalize', 'feedback_submit', 'feedback_reason', 'feedback_comment', 'skill_feedback_submit'].includes(value?.action ?? '') && larkAppId) {
     const { handleSkillFeedbackCardAction } = await import('./skill-feedback-card.js');
     const { getSkillFeedbackStore } = await import('../../services/skill-feedback-store.js');
     const { config } = await import('../../config.js');
     return handleSkillFeedbackCardAction(data, larkAppId, {
       store: await getSkillFeedbackStore(config.session.dataDir),
+      onFeedbackSubmitted: (platformMessageId, semantic) => {
+        deps.sedimentationDeps?.store.applyFeedbackGate(larkAppId, platformMessageId, semantic);
+      },
       loadBaseCard: async (platformMessageId) => {
         const detail = await getMessageDetail(larkAppId, platformMessageId);
         const content = detail?.items?.[0]?.body?.content ?? detail?.body?.content;
@@ -1977,6 +1987,10 @@ export async function handleCardAction(data: CardActionData, deps: CardHandlerDe
       cardMessageId,
       deps.v3DistillationDeps,
     );
+  }
+  if (isSedimentationCardAction(value?.action)) {
+    if (!deps.sedimentationDeps || !larkAppId) return;
+    return await handleSedimentationCardAction(data, larkAppId, deps.sedimentationDeps);
   }
 
   const isSensitive = value?.action && ['restart', 'close', 'resume', 'skip_repo', 'repo_manual_submit', 'repo_worktree_submit', 'worktree_toggle_mode', 'retry_last_task', 'retry_turn', 'get_write_link', 'open_local_terminal', 'open_local_cli', 'toggle_stream', 'toggle_display', 'export_text', 'term_action', 'refresh_screenshot', 'takeover', 'disconnect', 'tui_keys', 'tui_text_input', 'wf_approve', 'wf_reject', 'wf_cancel', 'stop_turn', 'compact_session'].includes(value.action);

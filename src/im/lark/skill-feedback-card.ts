@@ -4,21 +4,37 @@ import { resolveCardOperatorUnionId } from './card-handler.js';
 import type { FeedbackPolicy } from '../../services/feedback-policy.js';
 import type { SkillFeedbackStore } from '../../services/skill-feedback-store.js';
 
-export interface FeedbackCardState { result?: string; reasonKey?: string; comment?: string }
+export interface FeedbackCardState {
+  result?: string;
+  reasonKey?: string;
+  comment?: string;
+  /** A non-positive choice is visible but is not persisted until explicit submit. */
+  pending?: boolean;
+}
 
 function button(text: string, style: string, value: Record<string, unknown>, disabled = false): Record<string, unknown> {
   return { tag: 'button', text: { tag: 'plain_text', content: text }, type: style, disabled, behaviors: [{ type: 'callback', value }] };
 }
 
 export function buildFeedbackElement(policy: FeedbackPolicy, state: FeedbackCardState = {}): Record<string, unknown> {
-  const locked = !!state.result && !policy.allowReselect;
+  const locked = !!state.result && !state.pending && !policy.allowReselect;
+  const hasFollowup = policy.negativeFollowup.reasons.length > 0 || policy.negativeFollowup.comment.enabled;
   return {
     tag: 'column_set', element_id: 'botmux_feedback', flex_mode: 'none', horizontal_spacing: 'small',
-    columns: policy.buttons.map(option => ({
-      tag: 'column', width: 'auto', elements: [
-        button(option.label, option.style, { action: 'feedback_submit', result: option.key }, locked),
-      ],
-    })),
+    columns: policy.buttons.map(option => {
+      const selected = state.pending === true && state.result === option.key;
+      const staged = option.semantic !== 'positive' && hasFollowup;
+      return {
+        tag: 'column', width: 'auto', elements: [
+          button(
+            selected ? `✓ ${option.label}` : option.label,
+            selected ? 'primary' : option.style,
+            { action: staged ? 'feedback_select' : 'feedback_submit', result: option.key },
+            locked,
+          ),
+        ],
+      };
+    }),
   };
 }
 
@@ -26,23 +42,70 @@ function feedbackStateElements(policy: FeedbackPolicy, state: FeedbackCardState)
   if (!state.result) return [buildFeedbackElement(policy)];
   const selected = policy.buttons.find(option => option.key === state.result);
   const elements: Record<string, unknown>[] = [buildFeedbackElement(policy, state)];
-  elements.push({ tag: 'markdown', element_id: 'botmux_feedback_status', content: `已选择：**${selected?.label ?? state.result}**` });
-  if (!selected || selected.semantic !== 'negative') {
+  elements.push({
+    tag: 'markdown',
+    element_id: 'botmux_feedback_status',
+    content: `${state.pending ? '待提交' : '已提交'}：**${selected?.label ?? state.result}**`,
+  });
+  if (!selected || selected.semantic === 'positive') {
+    return elements;
+  }
+  const pending = state.pending === true;
+  const needsLegacyFollowup = !pending && state.reasonKey === undefined && state.comment === undefined;
+  if (!pending && !needsLegacyFollowup) {
+    if (state.reasonKey) {
+      const reason = policy.negativeFollowup.reasons.find(item => item.key === state.reasonKey);
+      if (reason) elements.push({ tag: 'markdown', element_id: 'botmux_feedback_reasons', content: `已记录原因：**${reason.label}**` });
+    }
+    if (state.comment !== undefined) elements.push({ tag: 'markdown', element_id: 'botmux_feedback_comment_done', content: '已记录补充说明' });
     return elements;
   }
   if (policy.negativeFollowup.reasons.length > 0) {
     elements.push({
       tag: 'column_set', element_id: 'botmux_feedback_reasons', flex_mode: 'none', horizontal_spacing: 'small',
-      columns: policy.negativeFollowup.reasons.map(reason => ({ tag: 'column', width: 'auto', elements: [button(state.reasonKey === reason.key ? `✓ ${reason.label}` : reason.label, state.reasonKey === reason.key ? 'primary' : 'default', { action: 'feedback_reason', reason_key: reason.key })] })),
+      columns: policy.negativeFollowup.reasons.map(reason => ({
+        tag: 'column',
+        width: 'auto',
+        elements: [button(
+          state.reasonKey === reason.key ? `✓ ${reason.label}` : reason.label,
+          state.reasonKey === reason.key ? 'primary' : 'default',
+          pending
+            ? { action: 'feedback_reason_select', result: state.result, reason_key: reason.key }
+            : { action: 'feedback_reason', reason_key: reason.key },
+        )],
+      })),
     });
   }
   if (policy.negativeFollowup.comment.enabled) {
-    if (state.comment !== undefined) elements.push({ tag: 'markdown', element_id: 'botmux_feedback_comment_done', content: '已补充说明' });
+    if (!pending && state.comment !== undefined) elements.push({ tag: 'markdown', element_id: 'botmux_feedback_comment_done', content: '已记录补充说明' });
     else elements.push({
       tag: 'form', name: 'feedback_comment_form', element_id: 'botmux_feedback_comment', elements: [
         { tag: 'input', name: 'comment', input_type: 'multiline_text', rows: 3, max_rows: 8, auto_resize: true, width: 'fill', required: policy.negativeFollowup.comment.required, placeholder: { tag: 'plain_text', content: policy.negativeFollowup.comment.placeholder } },
-        { tag: 'button', name: 'feedback_comment_submit', text: { tag: 'plain_text', content: '提交补充' }, type: 'primary', action_type: 'form_submit', value: { action: 'feedback_comment' } },
+        {
+          tag: 'button',
+          name: 'feedback_comment_submit',
+          text: { tag: 'plain_text', content: pending ? '提交反馈' : '提交补充' },
+          type: 'primary',
+          action_type: 'form_submit',
+          value: pending
+            ? { action: 'feedback_finalize', result: state.result, ...(state.reasonKey ? { reason_key: state.reasonKey } : {}) }
+            : { action: 'feedback_comment' },
+        },
       ],
+    });
+  } else if (pending) {
+    elements.push({
+      tag: 'column_set',
+      element_id: 'botmux_feedback_submit',
+      columns: [{
+        tag: 'column',
+        width: 'auto',
+        elements: [button('提交反馈', 'primary', {
+          action: 'feedback_finalize',
+          result: state.result,
+          ...(state.reasonKey ? { reason_key: state.reasonKey } : {}),
+        })],
+      }],
     });
   }
   if (!policy.negativeFollowup.comment.enabled && policy.negativeFollowup.reasons.length === 0) return elements;
@@ -55,6 +118,7 @@ const FEEDBACK_ELEMENT_IDS = new Set([
   'botmux_feedback_reasons',
   'botmux_feedback_comment',
   'botmux_feedback_comment_done',
+  'botmux_feedback_submit',
 ]);
 
 export function renderFeedbackCard(baseCard: Record<string, any>, policy: FeedbackPolicy, state: FeedbackCardState = {}): Record<string, unknown> {
@@ -74,6 +138,10 @@ function callbackKey(input: Record<string, unknown>): string { return createHash
 export async function handleSkillFeedbackCardAction(data: CardActionData, larkAppId: string, deps: {
   store: SkillFeedbackStore;
   loadBaseCard?: (platformMessageId: string) => Promise<Record<string, unknown> | undefined>;
+  onFeedbackSubmitted?: (
+    platformMessageId: string,
+    semantic: 'positive' | 'progress' | 'negative',
+  ) => void;
 }): Promise<any> {
   const platformMessageId = data.context?.open_message_id;
   const verifiedOperator = await resolveCardOperatorUnionId(data, larkAppId);
@@ -92,13 +160,41 @@ export async function handleSkillFeedbackCardAction(data: CardActionData, larkAp
   if (delivery.requesterSubjectId && delivery.requesterSubjectId !== operatorSubjectId && delivery.requesterSubjectId !== operatorOpenId) return { toast: { type: 'error', content: '仅本次提问者可反馈' } };
 
   const previous = deps.store.getLatestFeedback(delivery.deliveryId, operatorSubjectId);
-  if (previous && !delivery.policy.allowReselect && action === 'feedback_submit') {
+  if (previous && !delivery.policy.allowReselect && (action === 'feedback_submit' || action === 'feedback_select')) {
     return { card: { type: 'raw', data: renderFeedbackCard(baseCard, delivery.policy, previous) } };
   }
   let result: string;
   let reasonKey: string | undefined;
   let comment: string | undefined;
-  if (action === 'feedback_submit') {
+  if (action === 'feedback_select') {
+    result = data.action?.value?.result ?? '';
+    const selected = delivery.policy.buttons.find(item => item.key === result);
+    const hasFollowup = delivery.policy.negativeFollowup.reasons.length > 0 || delivery.policy.negativeFollowup.comment.enabled;
+    if (!selected || selected.semantic === 'positive' || !hasFollowup) return { toast: { type: 'error', content: '反馈选项无效，请重试' } };
+    return { deferredCard: { type: 'raw', data: renderFeedbackCard(baseCard, delivery.policy, { result, pending: true }) } };
+  } else if (action === 'feedback_reason_select') {
+    result = data.action?.value?.result ?? '';
+    reasonKey = data.action?.value?.reason_key;
+    const selected = delivery.policy.buttons.find(item => item.key === result);
+    if (!selected || selected.semantic === 'positive') return { toast: { type: 'error', content: '反馈选项无效，请重试' } };
+    if (!reasonKey || !delivery.policy.negativeFollowup.reasons.some(reason => reason.key === reasonKey)) return { toast: { type: 'error', content: '反馈原因无效，请重试' } };
+    return { card: { type: 'raw', data: renderFeedbackCard(baseCard, delivery.policy, { result, reasonKey, pending: true }) } };
+  } else if (action === 'feedback_finalize') {
+    result = data.action?.value?.result ?? '';
+    const selected = delivery.policy.buttons.find(item => item.key === result);
+    if (!selected || selected.semantic === 'positive') return { toast: { type: 'error', content: '反馈选项无效，请重试' } };
+    const rawReasonKey = data.action?.value?.reason_key;
+    reasonKey = typeof rawReasonKey === 'string' && rawReasonKey ? rawReasonKey : undefined;
+    if (reasonKey && !delivery.policy.negativeFollowup.reasons.some(reason => reason.key === reasonKey)) return { toast: { type: 'error', content: '反馈原因无效，请重试' } };
+    const config = delivery.policy.negativeFollowup.comment;
+    const raw = data.action?.form_value?.comment;
+    if (raw !== undefined && typeof raw !== 'string') return { toast: { type: 'warning', content: '补充说明格式无效' } };
+    comment = (raw ?? '').trim();
+    if (config.required && !comment) return { toast: { type: 'warning', content: '请填写补充说明' } };
+    if (comment.length > config.maxLength) return { toast: { type: 'warning', content: `补充说明不能超过 ${config.maxLength} 字` } };
+    if (!reasonKey && !comment) return { toast: { type: 'warning', content: '请选择一个原因或补充说明' } };
+    comment = comment || undefined;
+  } else if (action === 'feedback_submit') {
     result = data.action?.value?.result ?? '';
     if (!delivery.policy.buttons.some(item => item.key === result)) return { toast: { type: 'error', content: '反馈选项无效，请重试' } };
   } else if (action === 'feedback_reason') {
@@ -132,6 +228,10 @@ export async function handleSkillFeedbackCardAction(data: CardActionData, larkAp
       previousFeedbackId: previous?.feedbackId,
     }),
   });
+  if (selectedButton?.semantic) {
+    try { deps.onFeedbackSubmitted?.(platformMessageId, selectedButton.semantic); }
+    catch { /* feedback is already durable; an optional candidate gate must not roll it back */ }
+  }
   const renderedCard = renderFeedbackCard(baseCard, delivery.policy, recorded.feedback);
   if (action === 'feedback_submit' && delivery.policy.buttons.find(option => option.key === result)?.semantic === 'negative') {
     return { deferredCard: { type: 'raw', data: renderedCard } };

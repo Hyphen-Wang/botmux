@@ -66,8 +66,9 @@ describe('cmdSend hook context wiring', () => {
     expect(cmdSend).toContain('extractFirstReplyCardHeading(text)');
     expect(cmdSend).toContain('buildReplyLayoutHeader(replyLayout, layoutBody.heading, replyStyle)');
     expect(cmdSend).toContain('resolveReplyStyle(resolveReplyStyleConfig(s.larkAppId))');
-    expect(cmdSend).toContain('createReplyCard([...elements], layoutHeader)');
-    expect(cmdSend).toContain('createReplyCard(elements, layoutHeader)');
+    expect(cmdSend).toContain('const finalHeader = finalStatus');
+    expect(cmdSend).toContain(': layoutHeader;');
+    expect(cmdSend).toContain('createReplyCard([...elements], finalHeader)');
     expect(cliSource).toContain('--layout result|progress|risk|blocked|handoff');
   });
 
@@ -604,5 +605,11 @@ describe('cmdSend hook context wiring', () => {
     expect(cmdSend).toContain('policy: feedbackPolicy');
     expect(cmdSend).toContain('baseCard: feedbackBaseCard');
     expect(cmdSend).toContain('buildFeedbackElement(feedbackPolicy)');
+    expect(cmdSend).toContain("flagPresentButValueMissing(rest, '--final-status')");
+    expect(cmdSend).toContain('finalStatusOccurrences > 1');
+    expect(cmdSend).toContain('buildFinalStatusHeader(finalStatus)');
+    expect(cmdSend).toContain("flagPresentButValueMissing(rest, '--sedimentation-proposal-json')");
+    expect(cmdSend).toContain('buildSedimentationCandidateElement(sedimentationProposal)');
+    expect(cmdSend).toContain('sedimentationStore.bindCompletionMessage(');
   });
 });

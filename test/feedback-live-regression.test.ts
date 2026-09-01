@@ -42,7 +42,7 @@ describe('feedback regression matrix from 2026-08-11 live failures', () => {
     expect(json(card)).toContain('真实回答正文');
     expect(json(card)).toContain('botmux_reply_footer');
     expect(buttons(card)).toBe(3);
-    expect(json(card)).toContain('已选择：**有帮助**');
+    expect(json(card)).toContain('已提交：**有帮助**');
     expect(json(card)).not.toContain('feedback_comment_form');
   });
 
@@ -51,7 +51,7 @@ describe('feedback regression matrix from 2026-08-11 live failures', () => {
     const card = renderFeedbackCard(base, policy, { result: 'incorrect' });
     const body = json(card);
     expect(buttons(card)).toBe(6); // 3 primary + 2 reasons + submit
-    expect(body).toContain('已选择：**不正确**');
+    expect(body).toContain('已提交：**不正确**');
     expect(body).toContain('botmux_feedback_reasons');
     expect(body).toContain('feedback_comment_form');
     expect(body).toContain('"input_type":"multiline_text"');
@@ -61,12 +61,12 @@ describe('feedback regression matrix from 2026-08-11 live failures', () => {
     expect(body).not.toContain('"max_length"');
   });
 
-  it('progress selection is terminal and does not expose negative follow-up', () => {
+  it('progress selection is staged and exposes actionable follow-up', () => {
     const { policy, base } = fixture();
-    const card = renderFeedbackCard(base, policy, { result: 'incomplete' });
-    expect(json(card)).toContain('已选择：**不完整**');
-    expect(json(card)).not.toContain('botmux_feedback_reasons');
-    expect(json(card)).not.toContain('feedback_comment_form');
+    const card = renderFeedbackCard(base, policy, { result: 'incomplete', pending: true });
+    expect(json(card)).toContain('待提交：**不完整**');
+    expect(json(card)).toContain('botmux_feedback_reasons');
+    expect(json(card)).toContain('feedback_comment_form');
   });
 
   it('locks all primary buttons by default but leaves negative follow-up usable', () => {
@@ -90,7 +90,7 @@ describe('feedback regression matrix from 2026-08-11 live failures', () => {
     const negative = renderFeedbackCard(base, policy, { result: 'incorrect' });
     const positive = renderFeedbackCard(negative, policy, { result: 'helpful' });
     expect(buttons(positive)).toBe(3);
-    expect(json(positive)).toContain('已选择：**有帮助**');
+    expect(json(positive)).toContain('已提交：**有帮助**');
     expect(json(positive)).not.toContain('botmux_feedback_reasons');
     expect(json(positive)).not.toContain('feedback_comment_form');
   });

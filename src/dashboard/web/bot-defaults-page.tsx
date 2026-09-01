@@ -1205,7 +1205,7 @@ function FeedbackSettingsSection(props: { bot: BotDefaultsRow; patchBot: PatchBo
   return (
     <section className="bd-section" aria-busy={busy}>
       <h3 className="bd-section-title">
-        <FieldTitle help="开启后，最终回答卡片会显示“结论可用 / 有效推进 / 结论有误”等反馈按钮，用于收集回答质量评价。默认关闭；只影响这个 bot 的最终回答，不影响过程消息。">最终回答反馈</FieldTitle>
+        <FieldTitle help="开启后，最终回答卡片会显示“已满足 / 继续完善 / 不满足”等反馈按钮；非正向选择会先收集原因或说明，显式提交后才记入统计。默认关闭；只影响这个 bot 的最终回答，不影响过程消息。">最终回答反馈</FieldTitle>
       </h3>
       <ToggleRow checked={on} disabled={busy} title="最终回答反馈" help={null} description="在最终回答卡片中收集用户评价。" onChange={checked => { setOn(checked); void save(checked); }} />
       <StatusSpan status={status} />

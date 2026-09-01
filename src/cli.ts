@@ -6138,6 +6138,8 @@ botmux v${getVersion()} — IM ↔ AI 编程 CLI 桥接
        --layout result|progress|risk|blocked|handoff
                                        可选回复卡卡头薄壳；只在关键结果/进度/风险/阻塞/交接节点显式使用
        --response-kind progress|final|auxiliary  可选；未声明按 progress/非 final，只有 final 挂反馈
+       --final-status completed|failed|interrupted  仅限 final；用顶部大背景显示固定终态
+       --sedimentation-proposal-json <json>  仅限 final；在完成卡中增加低干扰的沉淀候选入口
        --mention <id:name>             @提及（可重复）。id 默认是 open_id；bot 配置开启
                                        allowArbitraryMention 后也可传完整邮箱/手机号/union_id，
                                        自动解析并校验其为目标群成员，否则拒发
@@ -7231,6 +7233,11 @@ import {
   type ReplyLayout,
 } from './im/lark/reply-card-style.js';
 import { buildFeedbackElement } from './im/lark/skill-feedback-card.js';
+import {
+  buildFinalStatusHeader,
+  parseFinalAnswerStatus,
+  type FinalAnswerStatus,
+} from './im/lark/final-status-header.js';
 import { resolveFeedbackPolicyForDelivery, resolveFeedbackTeamId } from './services/feedback-policy-resolver.js';
 import { normalizeFeedbackPolicy } from './services/feedback-policy.js';
 import { applyInlineMentions } from './im/lark/inline-mentions.js';
@@ -7377,7 +7384,7 @@ async function relaySend(
   // routing (--chat-id/--into/--top-level) and --session-id flags are dropped —
   // content/attachments come from the outbox and session-id is forced host-side.
   const FLAGS_NOVAL = new Set(['--mention-back', '--no-mention', '--no-quote', '--voice', '--slash']);
-  const FLAGS_VAL = new Set(['--mention', '--quote', '--response-kind']);
+  const FLAGS_VAL = new Set(['--mention', '--quote', '--response-kind', '--final-status', '--sedimentation-proposal-json']);
   const flags: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const tok = rest[i];
@@ -8164,8 +8171,30 @@ async function cmdSend(rest: string[]): Promise<void> {
     console.error('botmux send: --card-json 需要 JSON 字符串参数');
     process.exit(2);
   }
+  if (flagPresentButValueMissing(rest, '--sedimentation-proposal-json')) {
+    console.error('botmux send: --sedimentation-proposal-json 需要 JSON 对象');
+    process.exit(2);
+  }
+  if (flagPresentButValueMissing(rest, '--final-status')) {
+    console.error('botmux send: --final-status 仅支持 completed|failed|interrupted');
+    process.exit(2);
+  }
   const cardJsonArg = argValue(rest, '--card-json');
   const cardFile = argValue(rest, '--card-file');
+  const sedimentationProposalJson = argValue(rest, '--sedimentation-proposal-json');
+  const finalStatusOccurrences = rest.filter(token => token === '--final-status' || token.startsWith('--final-status=')).length;
+  if (finalStatusOccurrences > 1) {
+    console.error('botmux send: --final-status 只能指定一次');
+    process.exit(2);
+  }
+  const rawFinalStatus = argValue(rest, '--final-status');
+  const finalStatus: FinalAnswerStatus | undefined = rawFinalStatus === undefined
+    ? undefined
+    : parseFinalAnswerStatus(rawFinalStatus);
+  if (rawFinalStatus !== undefined && finalStatus === undefined) {
+    console.error('botmux send: --final-status 仅支持 completed|failed|interrupted');
+    process.exit(2);
+  }
   const customCardRequested = cardJsonArg !== undefined || cardFile !== undefined;
   const responseKindOccurrences = rest.filter(token => token === '--response-kind' || token.startsWith('--response-kind=')).length;
   if (responseKindOccurrences > 1) {
@@ -8186,6 +8215,14 @@ async function cmdSend(rest: string[]): Promise<void> {
   // `progress` and `auxiliary` (interim / supplementary output) both deliver
   // normally without a feedback region, matching the requirement's three roles.
   const effectiveResponseKind = responseKind ?? 'progress';
+  if (finalStatus !== undefined && effectiveResponseKind !== 'final') {
+    console.error('botmux send: --final-status 只能与 --response-kind final 同时使用');
+    process.exit(2);
+  }
+  if (sedimentationProposalJson !== undefined && effectiveResponseKind !== 'final') {
+    console.error('botmux send: 沉淀候选只能附加在 --response-kind final 的完成卡');
+    process.exit(2);
+  }
   const managedCustomCardError = managedVcCustomCardError(
     !!vcMeetingManagedSendOrigin,
     customCardRequested,
@@ -8995,6 +9032,14 @@ async function cmdSend(rest: string[]): Promise<void> {
     console.error('botmux send: --response-kind final 仅支持当前会话内的普通最终答案卡片');
     process.exit(2);
   }
+  if (sedimentationProposalJson !== undefined && (customCardRequested || asVoice || sendTopLevel || !!overrideChatId || !!sendInto || !!vcMeetingManagedSendOrigin)) {
+    console.error('botmux send: 沉淀候选只支持当前会话内的普通完成卡');
+    process.exit(2);
+  }
+  if (finalStatus !== undefined && (customCardRequested || asVoice || sendTopLevel || !!overrideChatId || !!sendInto || !!vcMeetingManagedSendOrigin)) {
+    console.error('botmux send: --final-status 只支持当前会话内的普通最终答案卡');
+    process.exit(2);
+  }
 
   // Ambiguity gate for --mention-back. --mention-back means "@ back the one
   // counterpart who triggered this turn"; that is only unambiguous when this
@@ -9048,6 +9093,37 @@ async function cmdSend(rest: string[]): Promise<void> {
     ? frozenTurnReplyTarget
     : resolveSendTarget({ into: sendInto, topLevel: sendTopLevel, chatScope: isChatScope, chatId: targetChatId, rootMessageId: s.rootMessageId, replyTargetRootId: turnReplyTarget?.rootMessageId, replyTargetTurnId: turnReplyTarget?.turnId, replyTargetQuoteOnly: turnReplyTarget?.quoteOnly, currentTurnId });
   const dataDir = resolveDataDir();
+  let sedimentationProposal: import('./services/sedimentation-proposal-store.js').SedimentationProposalRecord | undefined;
+  let sedimentationStore: import('./services/sedimentation-proposal-store.js').SedimentationProposalStore | undefined;
+  if (sedimentationProposalJson !== undefined) {
+    if (!feedbackRequesterSubjectId?.startsWith('ou_')) {
+      console.error('botmux send: 无法确认本次任务请求者，不能创建沉淀候选');
+      process.exit(2);
+    }
+    let candidate: unknown;
+    try { candidate = JSON.parse(sedimentationProposalJson); }
+    catch {
+      console.error('botmux send: --sedimentation-proposal-json 不是有效 JSON');
+      process.exit(2);
+    }
+    try {
+      const { SedimentationProposalStore } = await import('./services/sedimentation-proposal-store.js');
+      sedimentationStore = new SedimentationProposalStore(dataDir);
+      sedimentationProposal = sedimentationStore.prepare({
+        candidate,
+        requesterOpenId: feedbackRequesterSubjectId,
+        larkAppId: appId,
+        sessionId: sid,
+        chatId: targetChatId,
+        chatType: s.chatType === 'p2p' ? 'p2p' : 'group',
+        scope: s.scope === 'chat' ? 'chat' : 'thread',
+        anchor: s.scope === 'chat' ? s.chatId : (s.rootMessageId ?? s.chatId),
+      });
+    } catch (error) {
+      console.error(`botmux send: 沉淀候选不合法（${error instanceof Error ? error.message : String(error)}）`);
+      process.exit(2);
+    }
+  }
   const deferredBinding = !sendInto && (!overrideChatId || overrideChatId === s.chatId)
     ? readDeferredTopicBinding(dataDir, s.sessionId)
     : undefined;
@@ -9760,15 +9836,44 @@ async function cmdSend(rest: string[]): Promise<void> {
         }
       }
 
+      // A fixed terminal status is stronger than an optional presentation
+      // layout: it owns the semantic header, while the body/modules remain the
+      // same canonical Reply Card envelope introduced by PR #1137.
+      const finalHeader = finalStatus
+        ? buildFinalStatusHeader(finalStatus)
+        : layoutHeader;
+      const canonicalCard = createReplyCard([...elements], finalHeader);
+      const terminalActions: unknown[] = [];
       if (feedbackPolicy && effectiveResponseKind === 'final') {
-        const canonicalCard = createReplyCard([...elements], layoutHeader);
-        const feedbackElement = buildFeedbackElement(feedbackPolicy);
+        terminalActions.push(buildFeedbackElement(feedbackPolicy));
+      }
+      if (sedimentationProposal) {
+        const { buildSedimentationCandidateElement } = await import('./im/lark/sedimentation-proposal-card.js');
+        terminalActions.push(buildSedimentationCandidateElement(sedimentationProposal));
+      }
+      if (terminalActions.length > 0) {
         const footerIndex = canonicalCard.body.elements.findIndex((element: any) => element?.element_id === 'botmux_reply_footer');
-        canonicalCard.body.elements.splice(footerIndex >= 0 ? footerIndex : canonicalCard.body.elements.length, 0, feedbackElement);
+        canonicalCard.body.elements.splice(
+          footerIndex >= 0 ? footerIndex : canonicalCard.body.elements.length,
+          0,
+          ...terminalActions,
+        );
+      }
+      if (feedbackPolicy && effectiveResponseKind === 'final') {
         feedbackBaseCard = canonicalCard as unknown as Record<string, unknown>;
-        messageId = await dispatchPrimary(JSON.stringify(feedbackBaseCard), 'interactive');
-      } else {
-        messageId = await dispatchPrimary(JSON.stringify(createReplyCard(elements, layoutHeader)), 'interactive');
+      }
+      messageId = await dispatchPrimary(JSON.stringify(canonicalCard), 'interactive');
+    }
+
+    if (sedimentationProposal && sedimentationStore && messageId) {
+      try {
+        sedimentationStore.bindCompletionMessage(
+          sedimentationProposal.proposalId,
+          sedimentationProposal.nonce,
+          messageId,
+        );
+      } catch (error) {
+        console.error(`botmux send: 沉淀候选绑定完成卡失败：${error instanceof Error ? error.message : String(error)}`);
       }
     }
 

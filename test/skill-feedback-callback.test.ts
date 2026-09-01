@@ -38,7 +38,7 @@ describe('feedback callback state machine', () => {
       { store, loadBaseCard: async () => platformCard },
     );
     expect(JSON.stringify(result.card.data)).toContain('answer from platform');
-    expect(JSON.stringify(result.card.data)).toContain('已选择：**结论可用**');
+    expect(JSON.stringify(result.card.data)).toContain('已提交：**✅ 已满足**');
     store.close();
   });
 
@@ -49,7 +49,7 @@ describe('feedback callback state machine', () => {
       'app',
       { store, loadBaseCard: async () => { throw new Error('platform unavailable'); } },
     );
-    expect(JSON.stringify(result.card.data)).toContain('已选择：**结论可用**');
+    expect(JSON.stringify(result.card.data)).toContain('已提交：**✅ 已满足**');
     expect(JSON.stringify(result.card.data)).not.toContain('answer');
     store.close();
   });
@@ -62,6 +62,55 @@ describe('feedback callback state machine', () => {
     expect(result.deferredCard).toMatchObject({ type: 'raw' });
     expect(JSON.stringify(result.deferredCard.data)).toContain('结论错误');
     expect(store.getLatestFeedback(delivery.deliveryId, 'ou_user')).toMatchObject({ result: 'incorrect' });
+    store.close();
+  });
+
+  it('stages progress feedback without persistence and finalizes it once with actionable detail', async () => {
+    const { store, delivery } = await setup();
+    const submittedSemantics: string[] = [];
+    const staged = await handleSkillFeedbackCardAction(
+      event({ action: 'feedback_select', result: 'effective_progress' }),
+      'app',
+      { store },
+    );
+    expect(staged.deferredCard).toMatchObject({ type: 'raw' });
+    expect(JSON.stringify(staged.deferredCard.data)).toContain('待提交：**🛠 继续完善**');
+    expect(store.listFeedbackRevisions(delivery.deliveryId, 'ou_user')).toHaveLength(0);
+
+    const reason = await handleSkillFeedbackCardAction(
+      event({ action: 'feedback_reason_select', result: 'effective_progress', reason_key: 'wrong_result' }),
+      'app',
+      { store },
+    );
+    expect(JSON.stringify(reason.card.data)).toContain('✓ 结论错误');
+    expect(store.listFeedbackRevisions(delivery.deliveryId, 'ou_user')).toHaveLength(0);
+
+    const submitted = await handleSkillFeedbackCardAction(
+      event(
+        { action: 'feedback_finalize', result: 'effective_progress', reason_key: 'wrong_result' },
+        'ou_user',
+        { comment: ' 还需补齐验证 ' },
+      ),
+      'app',
+      { store, onFeedbackSubmitted: (_messageId, semantic) => submittedSemantics.push(semantic) },
+    );
+    expect(JSON.stringify(submitted.card.data)).toContain('已提交：**🛠 继续完善**');
+    expect(store.getLatestFeedback(delivery.deliveryId, 'ou_user')).toMatchObject({
+      result: 'effective_progress', semantic: 'progress', reasonKey: 'wrong_result', comment: '还需补齐验证', revision: 1,
+    });
+    expect(submittedSemantics).toEqual(['progress']);
+    store.close();
+  });
+
+  it('requires a reason or comment before non-positive feedback is persisted', async () => {
+    const { store, delivery } = await setup();
+    const result = await handleSkillFeedbackCardAction(
+      event({ action: 'feedback_finalize', result: 'incorrect' }, 'ou_user', { comment: '  ' }),
+      'app',
+      { store },
+    );
+    expect(result.toast).toMatchObject({ type: 'warning' });
+    expect(store.listFeedbackRevisions(delivery.deliveryId, 'ou_user')).toHaveLength(0);
     store.close();
   });
 
@@ -89,7 +138,7 @@ describe('feedback callback state machine', () => {
     const { store, delivery } = await setup();
     await handleSkillFeedbackCardAction(event({ action: 'feedback_submit', result: 'incorrect' }), 'app', { store });
     const result = await handleSkillFeedbackCardAction(event({ action: 'feedback_reason', reason_key: 'wrong_result' }), 'app', { store });
-    expect(JSON.stringify(result.card.data)).toContain('✓ 结论错误');
+    expect(JSON.stringify(result.card.data)).toContain('已记录原因：**结论错误**');
     expect(store.getLatestFeedback(delivery.deliveryId, 'ou_user')).toMatchObject({ result: 'incorrect', reasonKey: 'wrong_result' });
     store.close();
   });
@@ -103,7 +152,7 @@ describe('feedback callback state machine', () => {
     }
     expect(store.listFeedbackRevisions(delivery.deliveryId, 'ou_user')).toHaveLength(1);
     const ok = await handleSkillFeedbackCardAction(event({ action: 'feedback_comment' }, 'ou_user', { comment: ' ok ' }), 'app', { store });
-    expect(JSON.stringify(ok.card.data)).toContain('已补充说明');
+    expect(JSON.stringify(ok.card.data)).toContain('已记录补充说明');
     expect(JSON.stringify(ok.card.data)).not.toContain('ok');
     expect(store.getLatestFeedback(delivery.deliveryId, 'ou_user')).toMatchObject({ comment: 'ok' });
     store.close();
@@ -113,7 +162,7 @@ describe('feedback callback state machine', () => {
     const { store, delivery } = await setup();
     const first = await handleSkillFeedbackCardAction(event({ action: 'feedback_submit', result: 'conclusive_usable' }), 'app', { store });
     const second = await handleSkillFeedbackCardAction(event({ action: 'feedback_submit', result: 'incorrect' }), 'app', { store });
-    expect(JSON.stringify(first.card.data)).toContain('已选择：**结论可用**');
+    expect(JSON.stringify(first.card.data)).toContain('已提交：**✅ 已满足**');
     expect(second).toEqual(first);
     expect(store.getLatestFeedback(delivery.deliveryId, 'ou_user')).toMatchObject({ result: 'conclusive_usable', revision: 1 });
     store.close();
@@ -129,7 +178,7 @@ describe('feedback callback state machine', () => {
     await handleSkillFeedbackCardAction(event({ action: 'feedback_submit', result: 'conclusive_usable' }), 'app', { store });
     await handleSkillFeedbackCardAction(event({ action: 'feedback_submit', result: 'incorrect' }), 'app', { store });
     const back = await handleSkillFeedbackCardAction(event({ action: 'feedback_submit', result: 'conclusive_usable' }), 'app', { store });
-    expect(JSON.stringify(back.card.data)).toContain('已选择：**结论可用**');
+    expect(JSON.stringify(back.card.data)).toContain('已提交：**✅ 已满足**');
     expect(store.getLatestFeedback(delivery.deliveryId, 'ou_user')).toMatchObject({ result: 'conclusive_usable', revision: 3 });
     store.close();
   });

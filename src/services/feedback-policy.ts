@@ -33,9 +33,9 @@ export interface FeedbackPolicyInput {
 
 const SEMANTICS: FeedbackSemantic[] = ['positive', 'progress', 'negative'];
 const DEFAULT_BUTTONS: FeedbackButton[] = [
-  { key: 'conclusive_usable', label: '结论可用', semantic: 'positive', style: 'primary' },
-  { key: 'effective_progress', label: '有效推进', semantic: 'progress', style: 'default' },
-  { key: 'incorrect', label: '结论有误', semantic: 'negative', style: 'danger' },
+  { key: 'conclusive_usable', label: '✅ 已满足', semantic: 'positive', style: 'primary' },
+  { key: 'effective_progress', label: '🛠 继续完善', semantic: 'progress', style: 'default' },
+  { key: 'incorrect', label: '⚠️ 不满足', semantic: 'negative', style: 'danger' },
 ];
 const KEY = /^[a-z0-9_-]+$/;
 

@@ -14,7 +14,7 @@ describe('Bot Defaults feedback settings', () => {
     expect(page).toContain('生效预览');
     expect(page).toContain('<details className="bd-feedback-advanced">');
     expect(page).toContain('高级配置（JSON 与聊天覆盖）');
-    expect(page).toContain('最终回答卡片会显示“结论可用 / 有效推进 / 结论有误”等反馈按钮');
+    expect(page).toContain('最终回答卡片会显示“已满足 / 继续完善 / 不满足”等反馈按钮');
     expect(page).toContain('不了解 JSON 配置时保持默认即可');
     expect(page).toContain('聊天配置优先于 bot 默认配置');
     expect(page).toContain('在最终回答卡片中收集用户评价。');

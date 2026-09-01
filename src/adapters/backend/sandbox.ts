@@ -987,7 +987,14 @@ export interface RelayRequest {
 // content/attachments come from validated outbox files, and session-id is
 // forced by the worker.
 const RELAY_FLAGS_NOVAL = new Set(['--mention-back', '--no-mention', '--no-quote', '--voice', '--slash']);
-const RELAY_FLAGS_VAL = new Set(['--mention', '--quote', '--response-kind', '--layout']);
+const RELAY_FLAGS_VAL = new Set([
+  '--mention',
+  '--quote',
+  '--response-kind',
+  '--layout',
+  '--final-status',
+  '--sedimentation-proposal-json',
+]);
 
 export interface ValidatedRelay {
   command: 'send' | 'dispatch';
@@ -1096,6 +1103,18 @@ export function validateRelayRequest(req: RelayRequest): { ok: true; value: Vali
       }
       if (f === '--layout' && !['result', 'progress', 'risk', 'blocked', 'handoff'].includes(v)) {
         return { ok: false, error: 'flag --layout must be result, progress, risk, blocked, or handoff' };
+      }
+      if (f === '--final-status' && !['completed', 'failed', 'interrupted'].includes(v)) {
+        return { ok: false, error: 'flag --final-status must be completed, failed, or interrupted' };
+      }
+      if (f === '--sedimentation-proposal-json') {
+        if (v.length > 8192) return { ok: false, error: 'flag --sedimentation-proposal-json is too large' };
+        try {
+          const parsed = JSON.parse(v);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+        } catch {
+          return { ok: false, error: 'flag --sedimentation-proposal-json must be a JSON object' };
+        }
       }
       flags.push(f, v); i++; continue;
     }

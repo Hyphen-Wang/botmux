@@ -336,6 +336,7 @@ import {
 } from './core/persistent-backend.js';
 import type { PersistentBackendTarget } from './adapters/backend/types.js';
 import { handleCardAction, runAutoWorktreeCommit } from './im/lark/card-handler.js';
+import { createPluginCardActionGateway } from './core/plugins/card-actions/gateway.js';
 import { setIssueActivate } from './im/lark/issue-command-deps.js';
 import { startIssueOutboxPump } from './services/issue-outbox-pump.js';
 import type { CardActionData, CardHandlerDeps } from './im/lark/card-handler.js';
@@ -5558,6 +5559,17 @@ const cardDeps: CardHandlerDeps = {
       substitute: false,
     }),
 };
+
+// Plugin routing is resolved from the persistent registry and current Bot
+// bindings for every callback. A service restart or Lark reconnect therefore
+// requires no process-local handler registration and no second WS connection.
+const cardActionPluginGateway = createPluginCardActionGateway({
+  resolvePluginIds: (larkAppId) => resolveEffectivePluginIds(
+    getBot(larkAppId).config,
+    readGlobalConfig(),
+  ),
+  fallback: (data, larkAppId) => handleCardAction(data, cardDeps, larkAppId),
+});
 
 const LEGACY_WORKFLOW_API_RETIRED = {
   ok: false,
@@ -22523,7 +22535,7 @@ export async function startDaemon(botIndex?: number): Promise<void> {
     const botEventHandlers: EventHandlers = {
       handleCardAction: (data, appId) => withBotTurnAdmission(
         appId,
-        () => handleCardAction(data, cardDeps, appId),
+        () => cardActionPluginGateway.dispatch(data, appId),
       ),
       handleNewTopic: (data, ctx) => handleNewTopic(data, ctx),
       handleThreadReply: (data, ctx) => handleThreadReply(data, ctx),

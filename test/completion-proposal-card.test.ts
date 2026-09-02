@@ -110,6 +110,46 @@ describe('completion proposal final-card section', () => {
     expect(startContinuation).toHaveBeenCalledTimes(1);
   });
 
+  it('still starts an accepted continuation when the live card cannot be loaded', async () => {
+    const { store, record } = setup();
+    const startContinuation = vi.fn();
+    const result = await handleCompletionProposalAction({
+      operator: { open_id: record.requesterOpenId },
+      context: { open_message_id: record.cardMessageId },
+      action: { value: {
+        action: 'completion_proposal_decide',
+        proposal_id: record.proposalId,
+        nonce: record.nonce,
+        decision: 'accept',
+      } },
+    } as any, 'cli_app', {
+      store,
+      loadBaseCard: vi.fn(async () => { throw new Error('HTTP 500 lark rate limited'); }),
+      startContinuation,
+    }) as any;
+
+    expect(result.toast).toMatchObject({ type: 'success' });
+    expect(result.afterAck).toEqual(expect.any(Function));
+    await result.afterAck();
+    expect(startContinuation).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves ordinary punctuation and escapes ampersands in visible copy', () => {
+    const { record } = setup();
+    const element = buildCompletionProposalElement({
+      ...record,
+      visible: {
+        ...record.visible,
+        title: '已确认 3-5 个结论 (第 2 节)',
+        body: 'A & B 可以继续。',
+      },
+    });
+    const json = JSON.stringify(element);
+    expect(json).toContain('已确认 3-5 个结论 (第 2 节)');
+    expect(json).toContain('A &amp; B 可以继续。');
+    expect(json).not.toContain('3\\\\-5');
+  });
+
   it('keeps callback payload limited to the reserved action, proposal id, nonce and decision', () => {
     const { record } = setup();
     const json = JSON.stringify(buildCompletionProposalElement(record));

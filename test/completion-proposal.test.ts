@@ -118,6 +118,24 @@ describe('completion proposal lifecycle', () => {
     }).outcome).toBe('already_settled');
   });
 
+  it('rejects a callback replayed through another app or card message', () => {
+    const { store, prepared } = fixture();
+    store.bindMessage(prepared.proposalId, prepared.nonce, 'om_completion_12345678');
+    const attempt = (larkAppId: string, cardMessageId: string) => store.decide({
+      proposalId: prepared.proposalId,
+      nonce: prepared.nonce,
+      larkAppId,
+      cardMessageId,
+      operatorOpenId: prepared.requesterOpenId,
+      decision: 'accept',
+      now: 2_000,
+    });
+
+    expect(attempt('cli_other', 'om_completion_12345678').outcome).toBe('stale');
+    expect(attempt('cli_app', 'om_completion_87654321').outcome).toBe('stale');
+    expect(store.get(prepared.proposalId)?.status).toBe('open');
+  });
+
   it('expires open proposals and never replays an uncertain dispatch', () => {
     const { store, prepared } = fixture();
     store.bindMessage(prepared.proposalId, prepared.nonce, 'om_completion_12345678');

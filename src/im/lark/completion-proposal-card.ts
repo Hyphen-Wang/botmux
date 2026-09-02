@@ -5,11 +5,8 @@ import {
   type CompletionProposalStore,
 } from '../../core/completion-proposal.js';
 import { FINAL_CARD_PROPOSAL_ELEMENT_ID } from './final-card-sections.js';
+import { escapeLarkMd } from './issue-card.js';
 import type { CardActionData } from './card-handler.js';
-
-function escapeMd(value: string): string {
-  return value.replace(/([\\`*_{}[\]()#+.!|>~-])/g, '\\$1');
-}
 
 function decisionButton(
   label: string,
@@ -34,14 +31,14 @@ function decisionButton(
 }
 
 function settledCopy(record: CompletionProposalRecord): string | undefined {
-  if (record.status === 'dismissed') return `已选择：**${escapeMd(record.visible.dismissLabel)}**`;
+  if (record.status === 'dismissed') return `已选择：**${escapeLarkMd(record.visible.dismissLabel)}**`;
   if (record.status === 'expired') return '该后续动作已过期；如仍需要，请直接在话题中提出。';
   if (record.status !== 'accepted') return undefined;
   const state = record.dispatch?.state;
-  if (state === 'dispatched') return `已选择：**${escapeMd(record.visible.acceptLabel)}**，新的处理任务已启动。`;
-  if (state === 'dispatch_failed') return `已记录选择，但新任务未能启动；请直接在话题中回复“${escapeMd(record.visible.acceptLabel)}”。`;
+  if (state === 'dispatched') return `已选择：**${escapeLarkMd(record.visible.acceptLabel)}**，新的处理任务已启动。`;
+  if (state === 'dispatch_failed') return `已记录选择，但新任务未能启动；请直接在话题中回复“${escapeLarkMd(record.visible.acceptLabel)}”。`;
   if (state === 'dispatch_unknown') return '已记录选择，但无法确认新任务是否启动；为避免重复执行，不会自动重试。请在话题中确认后再继续。';
-  return `已选择：**${escapeMd(record.visible.acceptLabel)}**，正在启动新的处理任务…`;
+  return `已选择：**${escapeLarkMd(record.visible.acceptLabel)}**，正在启动新的处理任务…`;
 }
 
 export function buildCompletionProposalElement(record: CompletionProposalRecord): Record<string, unknown> {
@@ -60,7 +57,7 @@ export function buildCompletionProposalElement(record: CompletionProposalRecord)
         tag: 'markdown',
         content: settled
           ? `<text_tag color='grey'>可选后续</text_tag> ${settled}`
-          : `<text_tag color='blue'>可选后续</text_tag> **${escapeMd(record.visible.title)}**\n${escapeMd(record.visible.body)}`,
+          : `<text_tag color='blue'>可选后续</text_tag> **${escapeLarkMd(record.visible.title)}**\n${escapeLarkMd(record.visible.body)}`,
       }],
     }, ...(settled ? [] : [{
       tag: 'column',
@@ -147,7 +144,9 @@ export async function handleCompletionProposalAction(
   const afterAck = decision.outcome === 'accepted'
     ? { afterAck: () => deps.startContinuation(record) }
     : {};
-  const baseCard = await deps.loadBaseCard(cardMessageId, larkAppId);
+  let baseCard: Record<string, unknown> | undefined;
+  try { baseCard = await deps.loadBaseCard(cardMessageId, larkAppId); }
+  catch { /* decision is durable; card refresh must not block continuation */ }
   if (!baseCard) {
     return {
       toast: {

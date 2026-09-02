@@ -5568,6 +5568,34 @@ async function startCompletionProposalContinuation(record: CompletionProposalRec
   );
 }
 
+function scheduleCompletionProposalStartupRecovery(larkAppId: string): void {
+  try {
+    const recovered = completionProposalStore.recoverAtBootstrap(Date.now(), larkAppId);
+    if (recovered.changed.length > 0 || recovered.removed > 0) {
+      logger.warn(
+        `[completion-proposal] recovered ${recovered.changed.length} uncertain/expired record(s); `
+        + `removed ${recovered.removed} retained record(s)`,
+      );
+    }
+    for (const record of recovered.changed) {
+      if (record.cardMessageId) {
+        setTimeout(() => {
+          void patchCompletionProposalRecord(record)
+            .catch(error => logger.warn(`[completion-proposal] failed to patch recovered state: ${error}`));
+        }, 0);
+      }
+    }
+    for (const record of recovered.pending) {
+      setTimeout(() => {
+        void startCompletionProposalContinuation(record)
+          .catch(error => logger.warn(`[completion-proposal] failed to resume accepted proposal: ${error}`));
+      }, 0);
+    }
+  } catch (e) {
+    logger.warn(`[completion-proposal] recovery failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 const cardDeps: CardHandlerDeps = {
   activeSessions,
   sessionReply,
@@ -21908,32 +21936,6 @@ export async function startDaemon(botIndex?: number): Promise<void> {
   } catch (e) {
     logger.warn(`[ask] restorePersistedAsks failed: ${e instanceof Error ? e.message : String(e)}`);
   }
-  try {
-    const recovered = completionProposalStore.recoverAtBootstrap(Date.now(), cfg.larkAppId);
-    if (recovered.changed.length > 0 || recovered.removed > 0) {
-      logger.warn(
-        `[completion-proposal] recovered ${recovered.changed.length} uncertain/expired record(s); `
-        + `removed ${recovered.removed} retained record(s)`,
-      );
-    }
-    for (const record of recovered.changed) {
-      if (record.cardMessageId) {
-        setTimeout(() => {
-          void patchCompletionProposalRecord(record)
-            .catch(error => logger.warn(`[completion-proposal] failed to patch recovered state: ${error}`));
-        }, 0);
-      }
-    }
-    for (const record of recovered.pending) {
-      setTimeout(() => {
-        void startCompletionProposalContinuation(record)
-          .catch(error => logger.warn(`[completion-proposal] failed to resume accepted proposal: ${error}`));
-      }, 0);
-    }
-  } catch (e) {
-    logger.warn(`[completion-proposal] recovery failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
   writePidFile();
   const memoryDiagnostics = startMemoryDiagnostics();
 
@@ -22726,6 +22728,10 @@ export async function startDaemon(botIndex?: number): Promise<void> {
       sessionsRestored = true;
     },
   });
+  // Completion Proposal may resume an accepted pending decision immediately.
+  // Schedule it only after restore populated activeSessions; doing this before
+  // the awaited startup I/O deterministically marks every pending record failed.
+  scheduleCompletionProposalStartupRecovery(cfg.larkAppId);
 
   // Close CoT thinking bubbles orphaned by the previous daemon generation
   // (created mid-turn, never settled — their in-memory state died with the

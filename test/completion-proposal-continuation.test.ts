@@ -50,6 +50,14 @@ describe('completion proposal continuation', () => {
     expect(daemon).toContain('if (!queuedHasDurableTail && !ctx.completionProposalContinuation)');
   });
 
+  it('schedules pending proposal recovery only after active sessions are restored', () => {
+    const daemon = readFileSync(resolve('src/daemon.ts'), 'utf8');
+    const restore = daemon.indexOf('await restoreSessionsAndScheduleStartupRecovery({');
+    const recovery = daemon.indexOf('scheduleCompletionProposalStartupRecovery(cfg.larkAppId);');
+    expect(restore).toBeGreaterThanOrEqual(0);
+    expect(recovery).toBeGreaterThan(restore);
+  });
+
   it('dispatches once after the durable decision and publishes terminal state', async () => {
     const { store, accepted } = acceptedFixture();
     const dispatch = vi.fn(async () => 'admitted' as const);

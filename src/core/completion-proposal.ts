@@ -11,7 +11,11 @@ import {
 } from './human-decision-store.js';
 
 export const COMPLETION_PROPOSAL_CAPABILITY = 'completion_proposal_v1' as const;
-export const COMPLETION_PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
+/** V1's hard authorization ceiling. Keep this stable across default-TTL
+ * changes so already persisted V1 records remain readable but can never be
+ * extended into a longer-lived authorization. */
+export const COMPLETION_PROPOSAL_MAX_TTL_MS = 24 * 60 * 60 * 1000;
+export const COMPLETION_PROPOSAL_TTL_MS = COMPLETION_PROPOSAL_MAX_TTL_MS;
 export const COMPLETION_PROPOSAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const COMPLETION_PROPOSAL_ACTION = 'completion_proposal_decide';
 
@@ -161,7 +165,8 @@ function parseRecord(raw: PersistedHumanDecision | undefined): CompletionProposa
     || !value.originTurnId
     || !Number.isFinite(value.createdAt)
     || !Number.isFinite(value.deadlineAt)
-    || value.deadlineAt - value.createdAt !== COMPLETION_PROPOSAL_TTL_MS
+    || value.deadlineAt <= value.createdAt
+    || value.deadlineAt - value.createdAt > COMPLETION_PROPOSAL_MAX_TTL_MS
     || !['prepared', 'open', 'accepted', 'dismissed', 'expired'].includes(value.status)
   ) throw new Error('completion_proposal_record_corrupt');
   const visible = normalizeCompletionProposalInput(value.visible);

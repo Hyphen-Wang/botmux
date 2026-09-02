@@ -30095,6 +30095,10 @@ export async function startDaemon(botIndex?: number): Promise<void> {
     driveRestoredXpiGroup: groupId => { void driveNextXpiSharedCwdTurn(groupId); },
     driveRestoredPrincipalLane: ds => { driveNextPrincipalLaneTurn(ds); },
   });
+  // Completion Proposal may resume an accepted pending decision immediately.
+  // Schedule it only after restore populated activeSessions; doing this before
+  // the awaited startup I/O deterministically marks every pending record failed.
+  scheduleCompletionProposalStartupRecovery(cfg.larkAppId);
 
   // Completion Proposal may resume an accepted pending decision immediately.
   // Run only after restore populated activeSessions: running this before the

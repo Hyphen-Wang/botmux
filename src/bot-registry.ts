@@ -1716,9 +1716,10 @@ export interface BotConfig {
    */
   acceptSlashFromBots?: boolean;
   /**
-   * 消息额度覆盖配置：
-   *   • 未配置（undefined）→ 卡片使用产品默认 3 条；oncall 不自动计数。
-   *   • 配置正整数 D    → 卡片默认 D 条，同时作为 oncall 默认额度。
+   * 消息额度覆盖配置 —— **只约束「授权卡 / 自助申请授权」放进来的访客**：
+   *   • 未配置（undefined）→ 卡片使用产品默认 3 条。
+   *   • 配置正整数 D    → 卡片默认 D 条。
+   * **Oncall 群恒不限额、不读本字段**（历史上读过，病史见 event-dispatcher.oncallTalk）。
    * 显式 `/grant @x N` 的 N **恒生效**，与本字段是否配置无关（见 {@link quotaState}）。
    * 仅约束 chatGrants / globalGrants 这类 per-user talk 授权，绝不影响 canOperate。
    */

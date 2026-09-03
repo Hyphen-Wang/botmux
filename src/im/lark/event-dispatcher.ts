@@ -1686,20 +1686,20 @@ export interface TalkEvaluation {
   reason: TalkReason;
   quotaKey?: string;
   /**
-   * 仅在 reason==='oncall' 且命中 quotaKey 时可能为 true：本 oncall 用户在**同群**还持有一条
-   * 「未过期的显式 chatGrant」。oncall 与 chatGrant 共用同一把 chat quotaKey，owner 给 oncall
-   * 用户 /grant「不限」时磁盘上无 quota 记录（= 显式不限），若额度层再按 messageQuota.defaultLimit
-   * 懒初始化就会把「显式不限」静默套回 default。带上这个标志让额度层对这种交集**不兜 default**。
-   * 显式 N 授权已有 quota 记录，consumeQuota 直接消费现有记录，与本标志无关。
+   * **已无生产产出方**（保留字段，待独立 cleanup 一并删）。
+   * 历史语义：oncall 腿曾按 messageQuota.defaultLimit 挂 quotaKey，与 chatGrant 共用同一把 chat
+   * quotaKey，于是「oncall ∩ 显式不限 chatGrant」需要这个标志告诉额度层**不兜 default**。
+   * 现在 oncall 恒不挂 quotaKey（见 oncallTalk），该交集不再存在 —— 唯一产出这个标志的分支已删除，
+   * 没有任何代码再把它置为 true。
    */
   explicitGrantOverride?: boolean;
   /**
-   * 仅在 reason==='oncall' 且该用户同群持有一条**已过期** chatGrant 时给出：透传给
-   * consumeQuota，由它在**同一把额度锁内**以「当前 expiry」为权威判定——当前 expiry<=now 则原子清
-   *「成员+quota+expiry」并回落 oncall default；当前无 expiry/未来 expiry 则该 grant 仍 live（成员在→
-   * 不兜 default 按现有记录/不限消费；成员已被清→普通 oncall→回落 default）。收口进一把锁，杜绝跨
-   * await 用陈旧 ev 决策，也不会让过期成员关系残留成永久授权。（pure chatGrant/globalGrant 的过期走
-   * grantNotExpired 拒发。）
+   * **已无生产产出方**（保留字段，待独立 cleanup 一并删）。
+   * 历史语义：oncall 用户同群持有一条**已过期** chatGrant 时给出，透传给 consumeQuota 在同一把额度
+   * 锁内原子清「成员+quota+expiry」并回落 oncall default。现在 oncall 恒不挂 quotaKey，该腿不再产生
+   * 这个描述符；oncall 群里的过期 chatGrant 记录成为孤儿（该群不读 quotaState/expiry，不影响判定，
+   * 群一旦退出 oncall 即由 hasChatGrant 的 grantNotExpired 首条消息拒发 + 自愈清理）。
+   * 纯 chatGrant / globalGrant 的过期一直走 grantNotExpired 拒发，与本字段无关。
    */
   expiredGrantCleanup?: { scope: 'chat'; chatId: string; openId: string };
   /**

@@ -6534,7 +6534,7 @@ export function GrantSection(props: { bot: BotDefaultsRow; patchBot: PatchBot })
     : quota > MAX_GRANT_QUOTA
       ? tr('botDefaults.quotaHelpLegacy', {
         cardCount: MAX_GRANT_QUOTA,
-        oncallCount: quota,
+        configuredCount: quota,
         defaultCount: DEFAULT_GRANT_QUOTA,
       })
       : tr('botDefaults.quotaHelpCustom', {
@@ -6552,7 +6552,7 @@ export function GrantSection(props: { bot: BotDefaultsRow; patchBot: PatchBot })
       ? tr('botDefaults.grantDefaultsCurrentLegacy', {
         duration: currentDurationLabel,
         cardCount: MAX_GRANT_QUOTA,
-        oncallCount: quota,
+        configuredCount: quota,
       })
       : tr('botDefaults.grantDefaultsCurrentCustom', {
         duration: currentDurationLabel,

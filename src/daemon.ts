@@ -3834,14 +3834,13 @@ export async function enforceMessageQuotaForCliInput(
 
   let quota;
   try {
-    // oncall ∩ chatGrant 交集的额度决策**全部收口进 consumeQuota 的同一把锁**，杜绝跨 await
-    // 用陈旧 ev 决策：
-    //   • explicitGrantOverride（live 显式授权）→ 不兜 default（undefined）。
-    //   • expiredGrantCleanup（观察到过期 chatGrant）→ 透传给 consumeQuota，锁内以**当前 expiry**
-    //     为权威：当前 expiry<=now → 原子清「成员+quota+expiry」并回落 default；当前无/未来 expiry
-    //     → grant live（成员在→不兜 default 按现有/不限；成员已清→回落 default）。
-    //   • 其余 oncall（非成员）→ 兜 default。
-    // 传入的 def 是「拟回落值」；是否真用由 consumeQuota 锁内定夺（有 expiredGrant 时以 CAS 为准）。
+    // `def`（拟回落的懒初始化上限）在**当前生产路径下恒为 undefined**：只有 chatGrant / globalGrant
+    // 腿会挂 quotaKey，而 oncall 腿恒不挂（见 event-dispatcher.oncallTalk），所以带 reason==='oncall'
+    // 的判定在上面 `if (!ev.quotaKey) return true` 就已返回，走不到这里。访客的额度记录是**发卡那一刻**
+    // 按 `defaultLimit ?? 3` 写好的（ask-grant-request / grant-command / event-dispatcher 的自助申请卡），
+    // 不依赖 consumeQuota 的懒初始化。
+    // 表达式与 expiredGrantCleanup 透传一并保留：它们是上一版「oncall ∩ chatGrant 交集」的残留，
+    // 删除会牵动 consumeQuota 签名，留作独立 cleanup。
     const def = ev.reason === 'oncall' && !ev.explicitGrantOverride
       ? getBot(larkAppId).config.messageQuota?.defaultLimit
       : undefined;

@@ -91,6 +91,7 @@ import { chatAppLink, threadAppLink, normalizeBrand } from '../im/lark/lark-host
 import { writePromptContext } from '../services/prompt-context-store.js';
 import { hasInstalledPromptHookCached } from '../adapters/hook-installer.js';
 import { isSharedAdoptPersistedSession, isSharedAdoptSession } from './shared-adopt.js';
+import { readGroupCollaborationMode } from '../services/group-collaboration-mode-store.js';
 
 export { getAttachmentsDir } from './attachment-path.js';
 
@@ -932,6 +933,40 @@ function renderRoleContextBlock(
   return `<role context="${ctx}" chat_id="${xmlEscape(chatId)}">\n${roleContent}\n</role>`;
 }
 
+export function renderProjectGroupModeBlock(
+  larkAppId: string | undefined,
+  chatId: string | undefined,
+  dataDir = config.session.dataDir,
+): string {
+  if (!larkAppId || !chatId) return '';
+  try {
+    const mode = readGroupCollaborationMode(dataDir, chatId);
+    if (mode?.mode !== 'project' || mode.coordinatorAppId !== larkAppId) return '';
+    const workers = (mode.workerAppIds ?? []).map(xmlEscape).join(',');
+    return [
+      `<project_group_mode chat_id="${xmlEscape(chatId)}" coordinator_app_id="${xmlEscape(larkAppId)}" worker_app_ids="${workers}">`,
+      'This ordinary group is the project control plane. Derive and confirm project-specific goals in the conversation; do not treat Dashboard configuration as project content.',
+      'Use `botmux project init/update/status/close/resume` for the durable project state and pinned progress card.',
+      'Dispatch bounded subtasks only to the configured worker app ids with `botmux dispatch`; every new subtask must use a specific title of at most 24 characters (never generic "子任务/子项目"). Workers execute inside their subtopics and return progress with `botmux report`.',
+      '</project_group_mode>',
+    ].join('\n');
+  } catch (error) {
+    logger.warn(`[project-mode:${chatId}] prompt context unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return '';
+  }
+}
+
+function renderApplicationRoleBlock(
+  larkAppId: string | undefined,
+  chatId: string | undefined,
+  opts?: { followUp?: boolean },
+): string {
+  return [
+    renderRoleContextBlock(larkAppId, chatId, opts),
+    renderProjectGroupModeBlock(larkAppId, chatId),
+  ].filter(Boolean).join('\n\n');
+}
+
 export function ensureSessionWhiteboard(ds: DaemonSession): void {
   if (!whiteboardEnabled()) return;
   // Whiteboard is an optional, best-effort context enhancement. A failure here
@@ -1190,7 +1225,7 @@ function buildNewTopicBlocks(
     ].join('\n');
   }
 
-  const roleBlock = renderRoleContextBlock(opts?.larkAppId, opts?.chatId);
+  const roleBlock = renderApplicationRoleBlock(opts?.larkAppId, opts?.chatId);
   const whiteboardBlock = renderWhiteboardBlock({
     whiteboardId: opts?.whiteboardId,
     noTransport: sessionIsNoTransport(opts?.larkAppId, opts?.chatId),
@@ -1357,7 +1392,7 @@ export function buildNewTopicCliInput(
   if (cliId !== 'codex-app' || (followUps && followUps.length > 0 && !opts?.codexAppFollowUps)) {
     return { content, ...(opts?.trustedCaller ? { trustedCaller: opts.trustedCaller } : {}) };
   }
-  const roleBlock = renderRoleContextBlock(opts?.larkAppId, opts?.chatId);
+  const roleBlock = renderApplicationRoleBlock(opts?.larkAppId, opts?.chatId);
   const whiteboardBlock = renderWhiteboardBlock({
     whiteboardId: opts?.whiteboardId,
     noTransport: sessionIsNoTransport(opts?.larkAppId, opts?.chatId),
@@ -1440,7 +1475,7 @@ function buildFollowUpBlocks(
   hookMode = false,
 ): Array<{ key: FollowUpBlockKey; text: string }> {
   const blocks: Array<{ key: FollowUpBlockKey; text: string }> = [];
-  const roleBlock = renderRoleContextBlock(opts?.larkAppId, opts?.chatId, { followUp: true });
+  const roleBlock = renderApplicationRoleBlock(opts?.larkAppId, opts?.chatId, { followUp: true });
   const whiteboardBlock = renderWhiteboardBlock({
     whiteboardId: opts?.whiteboardId,
     noTransport: sessionIsNoTransport(opts?.larkAppId, opts?.chatId),
@@ -1661,7 +1696,7 @@ export function buildFollowUpCliInput(
   if (opts?.cliId !== 'codex-app' || opts.isAdoptMode) {
     return { content: legacyContent, ...(opts?.trustedCaller ? { trustedCaller: opts.trustedCaller } : {}) };
   }
-  const roleBlock = renderRoleContextBlock(opts.larkAppId, opts.chatId, { followUp: true });
+  const roleBlock = renderApplicationRoleBlock(opts.larkAppId, opts.chatId, { followUp: true });
   const whiteboardBlock = renderWhiteboardBlock({
     whiteboardId: opts.whiteboardId,
     noTransport: sessionIsNoTransport(opts.larkAppId, opts.chatId),

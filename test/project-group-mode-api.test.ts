@@ -1,0 +1,189 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getProjectGroupMode, putProjectGroupMode } from '../src/dashboard/project-group-mode-api.js';
+import {
+  evaluateProjectDispatchPolicy,
+  readGroupCollaborationMode,
+  writeGroupCollaborationMode,
+} from '../src/services/group-collaboration-mode-store.js';
+import { renderProjectGroupModeBlock } from '../src/core/session-manager.js';
+
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function fixture() {
+  const dataDir = mkdtempSync(join(tmpdir(), 'botmux-project-mode-'));
+  roots.push(dataDir);
+  const groups = vi.fn(async () => ({
+    chats: [{
+      chatId: 'oc_project',
+      chatMode: 'group',
+      memberBots: [
+        { larkAppId: 'cli_coordinator', inChat: true },
+        { larkAppId: 'cli_worker', inChat: true },
+        { larkAppId: 'cli_elsewhere', inChat: false },
+      ],
+    }],
+  }));
+  return { dataDir, groups };
+}
+
+describe('project group mode dashboard API', () => {
+  it('stores only group nature and bot policy, never project content', async () => {
+    const f = fixture();
+    const result = await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      progressCard: {
+        schemaVersion: 1, templateId: 'compact-list', sections: ['goal', 'workstreams'], milestonesExpanded: false,
+      },
+    }, f);
+    expect(result.status).toBe(200);
+    expect(result.body.config).toMatchObject({
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      progressCard: { templateId: 'compact-list', sections: ['goal', 'workstreams'] },
+    });
+    const raw = readFileSync(join(f.dataDir, 'group-collaboration-modes.json'), 'utf8');
+    const stored = JSON.parse(raw).configs.oc_project;
+    expect(stored).not.toHaveProperty('goal');
+    expect(stored).not.toHaveProperty('progress');
+    expect(stored.progressCard).toEqual({
+      schemaVersion: 1, templateId: 'compact-list', sections: ['goal', 'workstreams'], milestonesExpanded: false,
+    });
+    expect(statSync(join(f.dataDir, 'group-collaboration-modes.json')).mode & 0o777).toBe(0o600);
+  });
+
+  it('rejects project content fields and bots outside the group', async () => {
+    const f = fixture();
+    expect(await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'], goal: 'not config',
+    }, f)).toMatchObject({ status: 400, body: { error: 'unsupported_field' } });
+    expect(await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_elsewhere'],
+    }, f)).toMatchObject({ status: 409, body: { error: 'worker_not_in_chat' } });
+    expect(await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      progressCard: { schemaVersion: 1, templateId: 'raw-json', sections: [], milestonesExpanded: false },
+    }, f)).toMatchObject({ status: 400, body: { error: 'invalid_progress_card_config' } });
+  });
+
+  it('refreshes an existing pinned card immediately after display configuration changes', async () => {
+    const f = fixture();
+    const project = {
+      schemaVersion: 1, revision: 2, chatId: 'oc_project', larkAppId: 'cli_coordinator',
+      coordinatorSessionId: 'session_main', title: '项目', goal: '完成交付', phase: '联调', focus: '刷新卡片',
+      status: 'active' as const, blockers: [], workstreams: [], milestones: [],
+      card: { messageId: 'om_card', pinned: true, updatedAt: '2026-09-07T00:00:00.000Z' },
+      createdAt: '2026-09-07T00:00:00.000Z', updatedAt: '2026-09-07T00:00:00.000Z',
+    };
+    const refreshProjectCard = vi.fn(async () => project);
+    const result = await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      progressCard: {
+        schemaVersion: 1, templateId: 'status-dashboard', sections: ['goal', 'milestones'], milestonesExpanded: true,
+      },
+    }, {
+      ...f,
+      readProject: () => project,
+      refreshProjectCard,
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.cardRefresh).toBe('updated');
+    expect(refreshProjectCard).toHaveBeenCalledWith('oc_project', 'cli_coordinator');
+  });
+
+  it('persists an explicit standard mode so disabling cannot look unconfigured', async () => {
+    const f = fixture();
+    await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      progressCard: {
+        schemaVersion: 1, templateId: 'compact-list', sections: ['workstreams'], milestonesExpanded: false,
+      },
+    }, f);
+    const result = await putProjectGroupMode('oc_project', { mode: 'standard' }, f);
+    expect(result.body.config).toMatchObject({ mode: 'standard' });
+    expect(readGroupCollaborationMode(f.dataDir, 'oc_project')).toMatchObject({
+      mode: 'standard', progressCard: { templateId: 'compact-list', sections: ['workstreams'] },
+    });
+    expect((await getProjectGroupMode('oc_project', f)).body.config).toMatchObject({ mode: 'standard' });
+    const restored = await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+    }, f);
+    expect(restored.body.config).toMatchObject({
+      mode: 'project', progressCard: { templateId: 'compact-list', sections: ['workstreams'] },
+    });
+  });
+});
+
+describe('project dispatch policy', () => {
+  const config = {
+    schemaVersion: 1 as const,
+    chatId: 'oc_project',
+    mode: 'project' as const,
+    coordinatorAppId: 'cli_coordinator',
+    workerAppIds: ['cli_worker'],
+    createdAt: '2026-09-07T00:00:00.000Z',
+    updatedAt: '2026-09-07T00:00:00.000Z',
+  };
+
+  it('allows only the configured coordinator and worker set', () => {
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: ['cli_worker'], hasLegacyBots: false, title: '移动端验收', existingDispatch: false,
+    })).toEqual({ ok: true, projectMode: true });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_other', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: ['cli_worker'], hasLegacyBots: false, title: '移动端验收', existingDispatch: false,
+    })).toEqual({ ok: false, error: 'project_coordinator_required' });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: ['cli_other'], hasLegacyBots: false, title: '移动端验收', existingDispatch: false,
+    })).toEqual({ ok: false, error: 'project_worker_not_allowed', disallowedAppIds: ['cli_other'] });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_elsewhere',
+      targetAppIds: ['cli_worker'], hasLegacyBots: false, title: '移动端验收', existingDispatch: false,
+    })).toEqual({ ok: false, error: 'project_cross_chat_dispatch_forbidden' });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: [], hasLegacyBots: true, title: '移动端验收', existingDispatch: false,
+    })).toEqual({ ok: false, error: 'project_dispatch_requires_app_ids' });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: ['cli_worker'], hasLegacyBots: false, title: '子任务', existingDispatch: false,
+    })).toEqual({ ok: false, error: 'project_dispatch_title_required' });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: ['cli_worker'], hasLegacyBots: false, title: '这是一个明显超过二十四个字符并且不适合展示在项目卡片里的标题', existingDispatch: false,
+    })).toEqual({ ok: false, error: 'project_dispatch_title_too_long' });
+    expect(evaluateProjectDispatchPolicy({
+      config, sourceAppId: 'cli_coordinator', sourceChatId: 'oc_project', targetChatId: 'oc_project',
+      targetAppIds: ['cli_worker'], hasLegacyBots: false, title: '', existingDispatch: true,
+    })).toEqual({ ok: true, projectMode: true });
+  });
+
+  it('keeps legacy dispatch unrestricted until a group mode is explicitly configured', () => {
+    expect(evaluateProjectDispatchPolicy({
+      config: undefined, sourceAppId: 'cli_any', sourceChatId: 'oc_project', targetChatId: 'oc_elsewhere',
+      targetAppIds: [], hasLegacyBots: true,
+    })).toEqual({ ok: true, projectMode: false });
+  });
+});
+
+describe('project coordinator prompt context', () => {
+  it('injects the fixed project protocol only for the configured coordinator', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: 'oc_project', mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+    });
+    const coordinator = renderProjectGroupModeBlock('cli_coordinator', 'oc_project', f.dataDir);
+    expect(coordinator).toContain('<project_group_mode');
+    expect(coordinator).toContain('botmux project init/update/status/close/resume');
+    expect(coordinator).toContain('worker_app_ids="cli_worker"');
+    expect(coordinator).toContain('specific title of at most 24 characters');
+    expect(renderProjectGroupModeBlock('cli_worker', 'oc_project', f.dataDir)).toBe('');
+  });
+});

@@ -130,6 +130,13 @@ import { isSessionStopped } from './session-liveness.js';
 import { isRemoteBackendType, isRemoteCliId, isSuspendableBackendType } from './persistent-backend.js';
 import { getChatMode, replyMessage, sendMessage, resolveUnionIdFromOpenId, listThreadMessages, listChatMessages, listChatMessagesUntil, listChatBotMembers, getUserProfile, getUserProfileStrict, resolveAllowedUsersWithMap, getMessageThreadId, type ChatBotMember } from '../im/lark/client.js';
 import { fillNativeTopicId, isNativeTopicId } from './native-topic-id.js';
+import { parseProjectCoordinatorAction } from '../services/project-coordinator.js';
+import { projectCoordinator } from '../services/project-coordinator-runtime.js';
+import { readProjectGroup } from '../services/project-group-store.js';
+import {
+  evaluateProjectDispatchPolicy,
+  readGroupCollaborationMode,
+} from '../services/group-collaboration-mode-store.js';
 import { publishNativeTopicLinkPatchForSession } from './session-activity.js';
 import { parseApiMessage, cardContentHasUpgradeFallback, resolveMergedCardContent, messageMentionsBot } from '../im/lark/message-parser.js';
 import { resumeSession, spawnDashboardSession, activateQueuedSession, closeCliMismatchedSessionsForBot } from './session-manager.js';
@@ -766,7 +773,7 @@ function routeHasNarrowUntrustedAuth(method: string, pathname: string): boolean 
   // 该会话的 rotating per-turn
   // capability 并绑定到 URL 里的 sessionId（同 /api/asks 姿势）——capability 只
   // 证明「我是这个会话当前这一轮的 CLI」，选不了别的会话。
-  if (method === 'POST' && /^\/api\/sessions\/[^/]+\/(?:slash|cd|close|preview|chat-rename)$/.test(pathname)) return true;
+  if (method === 'POST' && /^\/api\/sessions\/[^/]+\/(?:slash|cd|close|preview|chat-rename|project|project-dispatch-policy)$/.test(pathname)) return true;
   // UserPromptSubmit hook 的 envelope claim：沙箱内 hook 读不到 host secret，
   // 走 body 里的 per-turn capability；handler 内 sessionCliIpcAuth 绑定到 URL 的
   // sessionId + 按 managedTurnOrigin.turnId 权威取（同 /close 姿势）。
@@ -2054,7 +2061,6 @@ ipcRoute('POST', '/api/sessions/:sessionId/slash', async (req, res, params) => {
 
 const proactiveChatRenameCooldown = new ChatRenameCooldown();
 const chatRenameSerialQueue = new ChatRenameSerialQueue();
-
 /** Session-scoped external mutation used by the botmux-chat-rename Skill. */
 ipcRoute('POST', '/api/sessions/:sessionId/chat-rename', async (req, res, params) => {
   const body = await readJsonBody<{ name?: unknown; proactive?: unknown } & Record<string, unknown>>(req)
@@ -2098,6 +2104,112 @@ ipcRoute('POST', '/api/sessions/:sessionId/chat-rename', async (req, res, params
     }
     return jsonRes(res, response.status, response.body);
   });
+});
+
+/** Project-group control plane. The authenticated ordinary-group chat session
+ * is the only caller identity; project state is durable and the pinned card is
+ * merely a projection that this route recreates if a user withdraws it. */
+ipcRoute('POST', '/api/sessions/:sessionId/project', async (req, res, params) => {
+  const body = await readJsonBody<Record<string, unknown>>(req).catch(() => undefined);
+  const ds = findActiveBySessionId(params.sessionId);
+  const auth = sessionCliIpcAuth(req, ds, params.sessionId, body);
+  if (!auth.ok) return jsonRes(res, 403, { ok: false, error: auth.error });
+  if (!ds) return jsonRes(res, 404, { ok: false, error: 'session_not_active' });
+  if (sessionTransportDisabled(ds)) return jsonRes(res, 409, { ok: false, error: 'no_feishu_transport' });
+  if (ds.chatType !== 'group' || ds.scope !== 'chat') {
+    return jsonRes(res, 400, { ok: false, error: 'project_requires_ordinary_group_chat_session' });
+  }
+  const groupMode = readGroupCollaborationMode(config.session.dataDir, ds.chatId);
+  if (groupMode?.mode === 'standard') {
+    return jsonRes(res, 409, { ok: false, error: 'project_mode_disabled' });
+  }
+  if (groupMode?.mode === 'project' && groupMode.coordinatorAppId !== ds.larkAppId) {
+    return jsonRes(res, 403, { ok: false, error: 'project_coordinator_required' });
+  }
+  const action = parseProjectCoordinatorAction(body);
+  if (!action) return jsonRes(res, 400, { ok: false, error: 'invalid_project_action' });
+  try {
+    const project = await projectCoordinator.run({
+      dataDir: config.session.dataDir,
+      chatId: ds.chatId,
+      larkAppId: ds.larkAppId,
+      coordinatorSessionId: ds.session.sessionId,
+    }, action);
+    return jsonRes(res, 200, { ok: true, project });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const status = detail === 'project_not_found' ? 404
+      : detail === 'project_already_exists' || detail === 'project_coordinator_mismatch' ? 409
+        : detail.startsWith('invalid_') || detail === 'title_and_goal_required' || detail === 'workstream_not_found'
+          || detail === 'project_workstream_title_required' || detail === 'project_workstream_title_too_long' ? 400
+          : 502;
+    return jsonRes(res, status, { ok: false, error: detail });
+  }
+});
+
+/** Trusted Dashboard refresh after a group-level card presentation change. */
+ipcRoute('POST', '/api/project-groups/:chatId/refresh-card', async (_req, res, params) => {
+  const chatId = decodeURIComponent(params.chatId);
+  if (!/^oc_[A-Za-z0-9_-]{1,128}$/.test(chatId)) {
+    return jsonRes(res, 400, { ok: false, error: 'invalid_chat_id' });
+  }
+  const mode = readGroupCollaborationMode(config.session.dataDir, chatId);
+  if (mode?.mode !== 'project' || mode.coordinatorAppId !== cachedLarkAppId) {
+    return jsonRes(res, 409, { ok: false, error: 'project_coordinator_mismatch' });
+  }
+  const project = readProjectGroup(config.session.dataDir, chatId);
+  if (!project) return jsonRes(res, 404, { ok: false, error: 'project_not_found' });
+  if (project.larkAppId !== cachedLarkAppId) {
+    return jsonRes(res, 409, { ok: false, error: 'project_coordinator_mismatch' });
+  }
+  try {
+    const refreshed = await projectCoordinator.run({
+      dataDir: config.session.dataDir,
+      chatId,
+      larkAppId: cachedLarkAppId,
+      coordinatorSessionId: project.coordinatorSessionId,
+    }, { action: 'refresh' });
+    return jsonRes(res, 200, { ok: true, project: refreshed });
+  } catch (error) {
+    return jsonRes(res, 502, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+/** Side-effect-free dispatch guard used before the CLI creates or writes a
+ * topic. The registration route repeats this check on the host boundary. */
+ipcRoute('POST', '/api/sessions/:sessionId/project-dispatch-policy', async (req, res, params) => {
+  const body = await readJsonBody<Record<string, unknown>>(req).catch(() => undefined);
+  const ds = findActiveBySessionId(params.sessionId);
+  const auth = sessionCliIpcAuth(req, ds, params.sessionId, body);
+  if (!auth.ok) return jsonRes(res, 403, { ok: false, error: auth.error });
+  if (!ds) return jsonRes(res, 404, { ok: false, error: 'session_not_active' });
+  const targetChatId = typeof body?.targetChatId === 'string' ? body.targetChatId.trim() : '';
+  const title = typeof body?.title === 'string' ? body.title.trim() : '';
+  const targetAppIds = Array.isArray(body?.targetAppIds)
+    ? body.targetAppIds.filter((value): value is string => typeof value === 'string').map(value => value.trim()).filter(Boolean)
+    : undefined;
+  if (!/^oc_[A-Za-z0-9_-]{1,128}$/.test(targetChatId) || !targetAppIds) {
+    return jsonRes(res, 400, { ok: false, error: 'invalid_project_dispatch_policy_request' });
+  }
+  const groupMode = readGroupCollaborationMode(config.session.dataDir, ds.chatId);
+  if (groupMode?.mode === 'project' && (ds.chatType !== 'group' || ds.scope !== 'chat')) {
+    return jsonRes(res, 403, { ok: false, error: 'project_coordinator_chat_scope_required' });
+  }
+  const decision = evaluateProjectDispatchPolicy({
+    config: groupMode,
+    sourceAppId: ds.larkAppId,
+    sourceChatId: ds.chatId,
+    targetChatId,
+    targetAppIds,
+    hasLegacyBots: body?.hasLegacyBots === true,
+    title,
+    existingDispatch: body?.existingDispatch === true,
+  });
+  if (!decision.ok) return jsonRes(res, 403, decision);
+  return jsonRes(res, 200, { ok: true, projectMode: decision.projectMode });
 });
 
 /** 会话内切换工作目录（角色切换专用）：硬校验角色库根 → 更新记录落盘（唯一事实源）

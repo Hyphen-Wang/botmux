@@ -6140,7 +6140,7 @@ ipcRoute('POST', DISPATCH_REPORT_REGISTER_ROUTE, async (req, res) => {
     });
   }
   let projectSynced = false;
-  if (groupMode?.mode !== 'standard' && ds.chatType === 'group' && ds.scope === 'chat' && targetChatId === ds.chatId) {
+  if (dispatchPolicy.projectMode && ds.chatType === 'group' && ds.scope === 'chat' && targetChatId === ds.chatId) {
     try {
       await projectCoordinator.run({
         dataDir: config.session.dataDir,

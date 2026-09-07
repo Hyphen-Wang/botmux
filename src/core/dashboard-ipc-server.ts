@@ -2120,6 +2120,9 @@ ipcRoute('POST', '/api/sessions/:sessionId/project', async (req, res, params) =>
     return jsonRes(res, 400, { ok: false, error: 'project_requires_ordinary_group_chat_session' });
   }
   const groupMode = readGroupCollaborationMode(config.session.dataDir, ds.chatId);
+  // An unconfigured group remains compatible with legacy dispatches: the CLI
+  // probes this route after dispatch and treats project_not_found as a silent
+  // no-op. Only an explicit standard-mode choice disables project commands.
   if (groupMode?.mode === 'standard') {
     return jsonRes(res, 409, { ok: false, error: 'project_mode_disabled' });
   }

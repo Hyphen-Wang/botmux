@@ -43,7 +43,7 @@ import {
 import { resolveBotmuxDataDir } from './core/data-dir.js';
 import { ENTRY_SUBCOMMANDS, entryForSubcommand, resolveEntrySpawn } from './core/self-spawn.js';
 import { dashboardSecretPath } from './core/dashboard-secret.js';
-import { acceptedDispatchBotAppIds, activeConversationBotOpenIds, buildDispatchCompletionBrief, parseDispatchBotSpec, buildDispatchMessages, buildRepoPrimeText, buildReportContent, eligibleAutoMentionAliases, foldableChatSessionAppIds, offTopicSubBotTopic, resolveReportPlacement, resolveReportRecipient, resolveSendTarget, threadRootForReachability } from './core/dispatch.js';
+import { acceptedDispatchBotAppIds, activeConversationBotOpenIds, buildDispatchCompletionBrief, buildProjectDispatchSyncAction, parseDispatchBotSpec, buildDispatchMessages, buildRepoPrimeText, buildReportContent, eligibleAutoMentionAliases, foldableChatSessionAppIds, offTopicSubBotTopic, resolveReportPlacement, resolveReportRecipient, resolveSendTarget, threadRootForReachability } from './core/dispatch.js';
 import {
   persistDispatchLifecycle as persistDispatchLifecycleRecord,
   type DispatchAcceptanceState,
@@ -10699,22 +10699,14 @@ async function postCurrentSessionDaemonRoute(input: {
 async function trySyncProjectDispatch(input: {
   sessionId: string;
   larkAppId: string;
-  dispatchRoot: string;
-  title: string;
-  purpose: string;
-  owners: string[];
-  status: 'pending' | 'in_progress' | 'blocked' | 'failed';
-  progress: number;
+  action: ReturnType<typeof buildProjectDispatchSyncAction>;
 }): Promise<boolean> {
   try {
     const response = await postCurrentSessionDaemonRoute({
       path: `/api/sessions/${encodeURIComponent(input.sessionId)}/project`,
       sessionId: input.sessionId,
       larkAppId: input.larkAppId,
-      body: {
-        action: 'dispatch', dispatchRoot: input.dispatchRoot, title: input.title,
-        purpose: input.purpose, owners: input.owners, status: input.status, progress: input.progress,
-      },
+      body: { ...input.action },
     });
     const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
     if (response.ok && body.ok) return true;
@@ -11021,13 +11013,20 @@ async function cmdDispatch(rest: string[]): Promise<void> {
         missingBotAppIds: acceptance?.missingBotAppIds,
       });
       const projectSynced = await trySyncProjectDispatch({
-        sessionId: sid, larkAppId: s.larkAppId, dispatchRoot: intoRoot,
-        // --into coordinates an existing workstream. An omitted title/purpose
-        // must preserve the original card metadata instead of replacing it
-        // with the generic fallback or a one-off steering message.
-        title: title.trim(), purpose: '',
-        owners: bots.map(bot => bot.name ?? bot.openId),
-        status: accepted ? 'in_progress' : 'blocked', progress: accepted ? 20 : 0,
+        sessionId: sid,
+        larkAppId: s.larkAppId,
+        action: buildProjectDispatchSyncAction({
+          existingDispatch: true,
+          dispatchRoot: intoRoot,
+          // --into coordinates an existing workstream. An omitted title/purpose
+          // must preserve the original card metadata instead of replacing it
+          // with the generic fallback or a one-off steering message.
+          title: title.trim(),
+          purpose: '',
+          owners: bots.map(bot => bot.name ?? bot.openId),
+          status: accepted ? 'in_progress' : 'blocked',
+          progress: accepted ? 20 : 0,
+        }),
       });
       console.log(JSON.stringify({
         success: accepted, taskSent: true, mode: 'into', sourceSessionId: sid,
@@ -11135,11 +11134,17 @@ async function cmdDispatch(rest: string[]): Promise<void> {
       missingBotAppIds: acceptance?.missingBotAppIds,
     });
     const projectSynced = await trySyncProjectDispatch({
-      sessionId: sid, larkAppId: s.larkAppId, dispatchRoot: seedId,
-      title: title.trim() || '子任务', purpose: brief,
-      owners: bots.map(bot => bot.name ?? bot.openId),
-      status: standby ? 'pending' : accepted ? 'in_progress' : 'blocked',
-      progress: standby || !accepted ? 0 : 20,
+      sessionId: sid,
+      larkAppId: s.larkAppId,
+      action: buildProjectDispatchSyncAction({
+        existingDispatch: false,
+        dispatchRoot: seedId,
+        title: title.trim() || '子任务',
+        purpose: brief,
+        owners: bots.map(bot => bot.name ?? bot.openId),
+        status: standby ? 'pending' : accepted ? 'in_progress' : 'blocked',
+        progress: standby || !accepted ? 0 : 20,
+      }),
     });
     console.log(JSON.stringify({
       success: accepted,
@@ -11180,9 +11185,17 @@ async function cmdDispatch(rest: string[]): Promise<void> {
         errorCode: 'TRANSPORT_FAILED',
       });
       await trySyncProjectDispatch({
-        sessionId: sid, larkAppId: s.larkAppId, dispatchRoot: dispatchRootForLifecycle,
-        title: title.trim() || '子任务', purpose: brief,
-        owners: bots.map(bot => bot.name ?? bot.openId), status: 'failed', progress: 0,
+        sessionId: sid,
+        larkAppId: s.larkAppId,
+        action: buildProjectDispatchSyncAction({
+          existingDispatch: Boolean(intoRoot),
+          dispatchRoot: dispatchRootForLifecycle,
+          title: title.trim() || (intoRoot ? '' : '子任务'),
+          purpose: intoRoot ? '' : brief,
+          owners: bots.map(bot => bot.name ?? bot.openId),
+          status: 'failed',
+          progress: 0,
+        }),
       });
     }
     console.error(JSON.stringify({

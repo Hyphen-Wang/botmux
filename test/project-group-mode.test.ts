@@ -98,6 +98,14 @@ describe('project group mode', () => {
     expect(reported.workstreams[0]).toMatchObject({ status: 'completed', progress: 100, lastReport: '全部用例通过' });
     expect(reported.milestones.at(-1)?.content).toBe('联调通过');
     expect(readProjectGroup(f.dataDir, f.context.chatId)?.workstreams[0]?.status).toBe('completed');
+
+    const coordinatedWithoutLifecycle = await f.coordinator.run(f.context, {
+      action: 'dispatch', dispatchRoot: 'om_subtask', title: '', purpose: '',
+    });
+    expect(coordinatedWithoutLifecycle.workstreams[0]).toMatchObject({
+      title: '联调验证', purpose: '验证价格和库存链路', owners: ['worker-a'],
+      status: 'completed', progress: 100,
+    });
   });
 
   it('rejects missing, generic, and overlong titles for new workstreams', async () => {

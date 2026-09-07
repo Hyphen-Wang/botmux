@@ -229,7 +229,6 @@ export class ProjectCoordinator {
       } else if (action.action === 'dispatch') {
         const root = action.dispatchRoot.trim();
         if (!/^om_[A-Za-z0-9_-]{1,128}$/.test(root)) throw new Error('invalid_dispatch_root');
-        const status = action.status ?? 'pending';
         const index = current.workstreams.findIndex(item => item.dispatchRoot === root);
         if (index >= 0) {
           const item = current.workstreams[index]!;
@@ -240,11 +239,17 @@ export class ProjectCoordinator {
             item.title = requestedTitle;
           }
           item.purpose = boundedText(action.purpose, 300, item.purpose);
-          if (action.owners) item.owners = action.owners.map(owner => boundedText(owner, 80)).filter(Boolean).slice(0, 16);
-          item.status = status;
-          item.progress = statusProgress(status, action.progress, item.progress);
+          if (action.owners !== undefined) {
+            item.owners = action.owners.map(owner => boundedText(owner, 80)).filter(Boolean).slice(0, 16);
+          }
+          if (action.status !== undefined || action.progress !== undefined) {
+            const status = action.status ?? item.status;
+            item.status = status;
+            item.progress = statusProgress(status, action.progress, item.progress);
+          }
           item.updatedAt = now;
         } else {
+          const status = action.status ?? 'pending';
           const title = boundedText(action.title, 80);
           if (!title || title === '子任务' || title === '子项目') throw new Error('project_workstream_title_required');
           if (Array.from(title).length > 24) throw new Error('project_workstream_title_too_long');

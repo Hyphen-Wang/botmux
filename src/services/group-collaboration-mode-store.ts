@@ -22,6 +22,8 @@ export interface GroupCollaborationModeConfig {
   mode: GroupCollaborationMode;
   coordinatorAppId?: string;
   workerAppIds?: string[];
+  /** Whether newly joined locally managed Bots should automatically become Workers. */
+  autoEnrollWorkers?: boolean;
   progressCard?: ProjectProgressCardConfig;
   /** Internal projection state for the pinned "waiting to start" guide. */
   onboardingCard?: ProjectOnboardingCardState;
@@ -95,6 +97,7 @@ export async function writeGroupCollaborationMode(
     mode: GroupCollaborationMode;
     coordinatorAppId?: string;
     workerAppIds?: string[];
+    autoEnrollWorkers?: boolean;
     progressCard?: ProjectProgressCardConfig;
   },
 ): Promise<GroupCollaborationModeConfig> {
@@ -113,6 +116,7 @@ export async function writeGroupCollaborationMode(
         ? {
             coordinatorAppId: input.coordinatorAppId,
             workerAppIds: [...new Set(input.workerAppIds ?? [])],
+            autoEnrollWorkers: input.autoEnrollWorkers ?? current?.autoEnrollWorkers ?? false,
           }
         : {}),
       ...(progressCard ? { progressCard: structuredClone(progressCard) } : {}),
@@ -126,11 +130,12 @@ export async function writeGroupCollaborationMode(
   return structuredClone(result);
 }
 
-/** Enroll a Bot that has just joined an existing project group.
+/** Enroll a Bot that has just joined a project group configured for automatic enrollment.
  *
  * This is intentionally independent from the Bot's auto-start-on-join setting:
  * joining the project roster is control-plane state, while auto-start decides
- * whether the Bot should immediately create a conversation session.
+ * whether the Bot should immediately create a conversation session. Groups with
+ * an explicitly curated Worker subset remain unchanged.
  */
 export async function addProjectWorkerIfNeeded(
   dataDir: string,
@@ -148,6 +153,7 @@ export async function addProjectWorkerIfNeeded(
     if (
       !current
       || current.mode !== 'project'
+      || current.autoEnrollWorkers !== true
       || current.coordinatorAppId === workerAppId
       || (current.workerAppIds ?? []).includes(workerAppId)
     ) {

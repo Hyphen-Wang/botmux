@@ -42,6 +42,7 @@ describe('Dashboard project group mode section', () => {
             ok: true,
             config: {
               chatId: 'oc_project', mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+              autoEnrollWorkers: true,
               progressCard: {
                 schemaVersion: 1, templateId: 'compact-list',
                 sections: ['goal', 'blockers', 'workstreams', 'milestones'], milestonesExpanded: false,
@@ -71,6 +72,7 @@ describe('Dashboard project group mode section', () => {
     const requestBody = JSON.parse(String(put?.[1]?.body));
     expect(requestBody).toEqual({
       mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      autoEnrollWorkers: true,
       progressCard: {
         schemaVersion: 1, templateId: 'compact-list',
         sections: ['goal', 'blockers', 'workstreams', 'milestones'], milestonesExpanded: false,
@@ -91,6 +93,7 @@ describe('Dashboard project group mode section', () => {
       collaborationMode: 'project',
       projectCoordinatorAppId: 'cli_coordinator',
       projectWorkerAppIds: ['cli_worker'],
+      projectAutoEnrollWorkers: false,
       projectProgressCard: {
         schemaVersion: 1, templateId: 'compact-list', sections: ['workstreams', 'milestones'], milestonesExpanded: true,
       },
@@ -110,6 +113,7 @@ describe('Dashboard project group mode section', () => {
 
     expect(renderer.root.findByProps({ 'data-project-runtime': 'active' })).toBeTruthy();
     expect(renderer.root.findByProps({ value: 'compact-list' }).props.checked).toBe(true);
+    expect(renderer.root.findByProps({ 'data-project-auto-enroll-workers': 'oc_project' }).props.checked).toBe(false);
     expect(renderer.root.findAllByType('input').every(input => input.props.type === 'radio' || input.props.type === 'checkbox')).toBe(true);
   });
 });

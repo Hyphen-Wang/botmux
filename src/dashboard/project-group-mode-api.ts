@@ -73,7 +73,11 @@ function responseBody(
     ? (({ onboardingCard: _onboardingCard, ...rest }) => rest)(config)
     : undefined;
   const effectiveConfig = publicConfig?.mode === 'project'
-    ? { ...publicConfig, progressCard: resolveProjectProgressCardConfig(publicConfig.progressCard) }
+    ? {
+        ...publicConfig,
+        autoEnrollWorkers: publicConfig.autoEnrollWorkers === true,
+        progressCard: resolveProjectProgressCardConfig(publicConfig.progressCard),
+      }
     : publicConfig ?? { schemaVersion: 1, chatId, mode: 'standard' };
   return {
     ok: true,
@@ -103,7 +107,7 @@ export async function putProjectGroupMode(
 ): Promise<ProjectGroupModeApiResult> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return bad('body_must_be_object');
   const record = body as Record<string, unknown>;
-  const supported = new Set(['mode', 'coordinatorAppId', 'workerAppIds', 'progressCard']);
+  const supported = new Set(['mode', 'coordinatorAppId', 'workerAppIds', 'autoEnrollWorkers', 'progressCard']);
   const unsupported = Object.keys(record).filter(key => !supported.has(key));
   if (unsupported.length > 0) return bad('unsupported_field', 400, { fields: unsupported });
   if (record.mode !== 'standard' && record.mode !== 'project') return bad('invalid_mode');
@@ -141,6 +145,10 @@ export async function putProjectGroupMode(
     return bad('invalid_worker_app_ids');
   }
   if (workerAppIds.includes(coordinatorAppId)) return bad('coordinator_cannot_be_worker');
+  if (record.autoEnrollWorkers !== undefined && typeof record.autoEnrollWorkers !== 'boolean') {
+    return bad('invalid_auto_enroll_workers');
+  }
+  const autoEnrollWorkers = record.autoEnrollWorkers === true;
   const progressCardParsed = record.progressCard === undefined
     ? { ok: true as const, value: resolveProjectProgressCardConfig(currentConfig?.progressCard) }
     : parseProjectProgressCardConfig(record.progressCard);
@@ -176,6 +184,7 @@ export async function putProjectGroupMode(
     mode: 'project',
     coordinatorAppId,
     workerAppIds,
+    autoEnrollWorkers,
     progressCard: progressCardParsed.value,
   });
   if (!project) {

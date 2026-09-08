@@ -5974,6 +5974,7 @@ const server = createServer(async (req, res) => {
                 ? {
                     projectCoordinatorAppId: mode.coordinatorAppId,
                     projectWorkerAppIds: mode.workerAppIds ?? [],
+                    projectAutoEnrollWorkers: mode.autoEnrollWorkers === true,
                     ...(!mode.progressCard
                       ? { projectProgressCard: resolveProjectProgressCardConfig(undefined) }
                       : {}),

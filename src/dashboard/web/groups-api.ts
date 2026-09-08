@@ -24,6 +24,7 @@ export interface GroupChat {
   collaborationMode?: 'standard' | 'project';
   projectCoordinatorAppId?: string;
   projectWorkerAppIds?: string[];
+  projectAutoEnrollWorkers?: boolean;
   projectProgressCard?: ProjectProgressCardConfig;
   projectRuntime?: ProjectGroupRuntimeSummary;
   memberBots: GroupMemberBot[];
@@ -68,6 +69,7 @@ export interface GroupCollaborationModeResponse {
     mode: 'standard' | 'project';
     coordinatorAppId?: string;
     workerAppIds?: string[];
+    autoEnrollWorkers?: boolean;
     progressCard?: ProjectProgressCardConfig;
   };
   project: ProjectGroupRuntimeSummary | null;
@@ -242,6 +244,7 @@ export async function saveGroupCollaborationMode(
         mode: 'project';
         coordinatorAppId: string;
         workerAppIds: string[];
+        autoEnrollWorkers: boolean;
         progressCard: ProjectProgressCardConfig;
       },
 ): Promise<GroupCollaborationModeResponse> {

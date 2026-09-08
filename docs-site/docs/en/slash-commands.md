@@ -183,7 +183,7 @@ In the top-level ordinary-group chat, mention the Bot that should coordinate the
 @bot /project enable
 ```
 
-The addressed Bot becomes coordinator and the other bots in this group that are managed by the same Botmux host become workers. The command writes the same source of truth as Dashboard and immediately sends and pins the getting-started card. A settled project goal is not required; discussion can begin first in the top-level chat. After project mode is enabled, newly joined bots managed by the same Botmux host are enrolled in the worker allowlist automatically, independently of the auto-start-on-join setting.
+The addressed Bot becomes coordinator and the other bots in this group that are managed by the same Botmux host become workers. The command writes the same source of truth as Dashboard and immediately sends and pins the getting-started card. A settled project goal is not required; discussion can begin first in the top-level chat. Command-based enablement turns on “automatically enroll new bots” by default, so newly joined bots managed by the same host enter the worker allowlist independently of the auto-start-on-join setting.
 
 On every project turn, the coordinator receives Botmux's fixed project-state protocol: read durable state first, then persist material changes to the goal, phase, current work, remaining plan, blockers, or milestones. This protocol is injected separately from custom Roles, so Role wording and once-only Role injection cannot disable it. On first initialization, Botmux sends and pins a fresh formal project card at the current point in the timeline, then unpins the getting-started guide; later progress updates patch the formal card in place.
 
@@ -191,7 +191,7 @@ On every project turn, the coordinator receives Botmux's fixed project-state pro
 - `@bot /project roles`: Reply in the current group with a focused role card for this project’s coordinator and workers; only the admin who opened the card can operate it. Saving reuses the per-chat `/role` files and follows the bot’s existing injection policy: every-turn mode applies on the next message, while once mode applies after a new or rebuilt session.
 - `@bot /project disable`: leave project-group mode; an unused guide is unpinned, while existing project state is retained for a later re-enable.
 
-The command works only in ordinary groups and only for the Bot's owner/allowedUsers. Repeating `enable` preserves any worker subset already curated in Dashboard. Dashboard also lists the same project agents and deep-links to their group-role editors; both entry points share one role source of truth.
+The command works only in ordinary groups and only for the Bot's owner/allowedUsers. Repeating `enable` preserves any worker subset and auto-enrollment policy already curated in Dashboard. Dashboard can disable “automatically enroll new bots”; when disabled, the explicit worker list remains unchanged. Dashboard also lists the same project agents and deep-links to their group-role editors; both entry points share one role source of truth.
 
 ## 📄 Feishu Doc Comment Entry
 

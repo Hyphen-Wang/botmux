@@ -60,6 +60,7 @@ export interface ProjectGroupSlashDeps {
       mode: 'standard' | 'project';
       coordinatorAppId?: string;
       workerAppIds?: string[];
+      autoEnrollWorkers?: boolean;
     },
   ): Promise<GroupCollaborationModeConfig>;
   readProject(dataDir: string, chatId: string): ProjectGroupState | undefined;
@@ -210,6 +211,7 @@ export async function runProjectGroupSlashCommand(
         mode: 'project',
         coordinatorAppId: input.larkAppId,
         workerAppIds: members.map(member => member.larkAppId).filter(appId => appId !== input.larkAppId),
+        autoEnrollWorkers: true,
       });
 
   if (project) {

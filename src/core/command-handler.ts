@@ -3486,9 +3486,13 @@ export async function handleCommand(
           const runtime = result.project
             ? `${result.project.title} · ${result.project.phase}`
             : t('cmd.project.waiting', undefined, loc);
+          const workerPolicy = t(result.config.autoEnrollWorkers
+            ? 'cmd.project.worker_policy_auto'
+            : 'cmd.project.worker_policy_manual', undefined, loc);
           await sessionReply(rootId, t('cmd.project.status_project', {
             coordinator: botDisplayName(result.config.coordinatorAppId ?? appId),
             workers,
+            workerPolicy,
             runtime,
           }, loc));
           break;
@@ -3509,6 +3513,9 @@ export async function handleCommand(
 
         const workers = (result.config.workerAppIds ?? []).map(botDisplayName).join('、')
           || t('cmd.project.none', undefined, loc);
+        const workerPolicy = t(result.config.autoEnrollWorkers
+          ? 'cmd.project.worker_policy_auto'
+          : 'cmd.project.worker_policy_manual', undefined, loc);
         const key = result.alreadyEnabled
           ? 'cmd.project.already_enabled'
           : result.project
@@ -3520,6 +3527,7 @@ export async function handleCommand(
         await sessionReply(rootId, t(key, {
           coordinator: botDisplayName(result.config.coordinatorAppId ?? appId),
           workers,
+          workerPolicy,
         }, loc) + cardNote);
         logger.info(`[${logTag}] /project enabled chat=${chatId} coordinator=${appId} workers=${result.config.workerAppIds?.length ?? 0}`);
         break;

@@ -45,7 +45,7 @@ describe('project group mode dashboard API', () => {
       });
     });
     const result = await putProjectGroupMode('oc_project', {
-      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'], autoEnrollWorkers: true,
     }, { ...f, ensureOnboardingCard });
     expect(result.status).toBe(200);
     expect(result.body.cardRefresh).toBe('updated');
@@ -59,7 +59,7 @@ describe('project group mode dashboard API', () => {
   it('stores only group nature and bot policy, never project content', async () => {
     const f = fixture();
     const result = await putProjectGroupMode('oc_project', {
-      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'], autoEnrollWorkers: true,
       progressCard: {
         schemaVersion: 1, templateId: 'compact-list', sections: ['goal', 'workstreams'], milestonesExpanded: false,
       },
@@ -67,6 +67,7 @@ describe('project group mode dashboard API', () => {
     expect(result.status).toBe(200);
     expect(result.body.config).toMatchObject({
       mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+      autoEnrollWorkers: true,
       progressCard: { templateId: 'compact-list', sections: ['goal', 'workstreams'] },
     });
     const raw = readFileSync(join(f.dataDir, 'group-collaboration-modes.json'), 'utf8');
@@ -91,6 +92,9 @@ describe('project group mode dashboard API', () => {
       mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
       progressCard: { schemaVersion: 1, templateId: 'raw-json', sections: [], milestonesExpanded: false },
     }, f)).toMatchObject({ status: 400, body: { error: 'invalid_progress_card_config' } });
+    expect(await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'], autoEnrollWorkers: 'yes',
+    }, f)).toMatchObject({ status: 400, body: { error: 'invalid_auto_enroll_workers' } });
   });
 
   it('refreshes an existing pinned card immediately after display configuration changes', async () => {
@@ -216,11 +220,23 @@ describe('project dispatch policy', () => {
 });
 
 describe('project worker membership sync', () => {
-  it('atomically adds newly joined local bots without losing existing project configuration', async () => {
+  it('preserves an explicitly curated worker subset when automatic enrollment is disabled', async () => {
     const f = fixture();
     await writeGroupCollaborationMode(f.dataDir, {
       chatId: 'oc_project', mode: 'project', coordinatorAppId: 'cli_coordinator',
       workerAppIds: ['cli_worker'],
+    });
+
+    expect(await addProjectWorkerIfNeeded(f.dataDir, 'oc_project', 'cli_new')).toBeUndefined();
+    expect(readGroupCollaborationMode(f.dataDir, 'oc_project')?.workerAppIds).toEqual(['cli_worker']);
+  });
+
+  it('atomically adds newly joined local bots when automatic enrollment is enabled', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: 'oc_project', mode: 'project', coordinatorAppId: 'cli_coordinator',
+      workerAppIds: ['cli_worker'],
+      autoEnrollWorkers: true,
       progressCard: {
         schemaVersion: 1, templateId: 'compact-list', sections: ['workstreams'], milestonesExpanded: false,
       },

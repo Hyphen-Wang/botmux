@@ -105,6 +105,7 @@ describe('/project slash command', () => {
       mode: 'project',
       coordinatorAppId: 'cli_coordinator',
       workerAppIds: ['cli_worker_a', 'cli_worker_b'],
+      autoEnrollWorkers: true,
     });
     expect(f.ensureOnboardingCard).toHaveBeenCalledWith(
       { dataDir: f.dataDir, chatId: 'oc_project', larkAppId: 'cli_coordinator' },
@@ -119,12 +120,14 @@ describe('/project slash command', () => {
       mode: 'project',
       coordinatorAppId: input.larkAppId,
       workerAppIds: ['cli_worker_a'],
+      autoEnrollWorkers: false,
     });
 
     const result = await runProjectGroupSlashCommand(input, f.deps);
 
     expect(result).toMatchObject({ kind: 'enabled', alreadyEnabled: true });
     expect(readGroupCollaborationMode(f.dataDir, input.chatId)?.workerAppIds).toEqual(['cli_worker_a']);
+    expect(readGroupCollaborationMode(f.dataDir, input.chatId)?.autoEnrollWorkers).toBe(false);
     expect(f.ensureOnboardingCard).toHaveBeenCalledWith(expect.anything(), {
       coordinatorName: 'nodex', workerNames: ['Worker A'],
     });

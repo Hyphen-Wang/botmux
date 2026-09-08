@@ -147,7 +147,34 @@ afterAll(() => {
 });
 
 describe('handleBotAdded — 普通群 shared 路由', () => {
-  it('项目群新 Bot 即使未开启入群自动开工，也会加入 Worker 白名单', async () => {
+  it('项目群关闭自动纳入时保留显式 Worker 名单', async () => {
+    const { collaborationModeStore, daemon, registry } = modules;
+    const appId = 'app_join_explicit_worker';
+    const chatId = 'oc_join_explicit_worker';
+    registry.registerBot({
+      larkAppId: appId,
+      larkAppSecret: 's',
+      cliId: 'claude-code',
+      allowedUsers: ['ou_owner'],
+      autoStartOnGroupJoin: false,
+    });
+    await collaborationModeStore.writeGroupCollaborationMode(process.env.SESSION_DATA_DIR!, {
+      chatId,
+      mode: 'project',
+      coordinatorAppId: 'app_coordinator',
+      workerAppIds: ['app_existing_worker'],
+      autoEnrollWorkers: false,
+    });
+
+    await daemon.__testOnly_handleBotAdded(chatId, 'ou_owner', appId);
+
+    expect(collaborationModeStore.readGroupCollaborationMode(process.env.SESSION_DATA_DIR!, chatId)?.workerAppIds)
+      .toEqual(['app_existing_worker']);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.forkWorker).not.toHaveBeenCalled();
+  });
+
+  it('项目群开启自动纳入后，新 Bot 即使未开启入群自动开工也会加入 Worker 白名单', async () => {
     const { collaborationModeStore, daemon, registry } = modules;
     const appId = 'app_join_project_worker';
     const chatId = 'oc_join_project_worker';
@@ -163,6 +190,7 @@ describe('handleBotAdded — 普通群 shared 路由', () => {
       mode: 'project',
       coordinatorAppId: 'app_coordinator',
       workerAppIds: ['app_existing_worker'],
+      autoEnrollWorkers: true,
     });
 
     await daemon.__testOnly_handleBotAdded(chatId, 'ou_owner', appId);

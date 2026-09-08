@@ -1241,12 +1241,14 @@ function collaborationModeSignature(
   mode: 'standard' | 'project',
   coordinatorAppId: string,
   workerAppIds: Iterable<string>,
+  autoEnrollWorkers: boolean,
   progressCard: ProjectProgressCardConfig,
 ): string {
   return JSON.stringify({
     mode,
     coordinatorAppId: mode === 'project' ? coordinatorAppId : '',
     workerAppIds: mode === 'project' ? [...workerAppIds].sort() : [],
+    autoEnrollWorkers: mode === 'project' ? autoEnrollWorkers : false,
     progressCard: mode === 'project' ? progressCard : null,
   });
 }
@@ -1276,15 +1278,20 @@ export function ProjectGroupModeSection(props: {
   const [mode, setMode] = useState<'standard' | 'project'>(chat.collaborationMode ?? 'standard');
   const [coordinatorAppId, setCoordinatorAppId] = useState(initialCoordinator);
   const [workerAppIds, setWorkerAppIds] = useState<Set<string>>(() => new Set(initialWorkers));
+  const [autoEnrollWorkers, setAutoEnrollWorkers] = useState(
+    chat.collaborationMode === 'project' ? chat.projectAutoEnrollWorkers === true : true,
+  );
   const [progressCard, setProgressCard] = useState<ProjectProgressCardConfig>(
     () => chat.projectProgressCard ?? defaultProjectProgressCardConfig(),
   );
   const [runtime, setRuntime] = useState<ProjectGroupRuntimeSummary | null>(chat.projectRuntime ?? null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ text: string; tone: 'ok' | 'warn' } | null>(null);
-  const savedSignatureRef = useRef(collaborationModeSignature(mode, coordinatorAppId, workerAppIds, progressCard));
+  const savedSignatureRef = useRef(collaborationModeSignature(
+    mode, coordinatorAppId, workerAppIds, autoEnrollWorkers, progressCard,
+  ));
 
-  const signature = collaborationModeSignature(mode, coordinatorAppId, workerAppIds, progressCard);
+  const signature = collaborationModeSignature(mode, coordinatorAppId, workerAppIds, autoEnrollWorkers, progressCard);
   const dirty = signature !== savedSignatureRef.current;
 
   function selectMode(nextMode: 'standard' | 'project'): void {
@@ -1334,13 +1341,17 @@ export function ProjectGroupModeSection(props: {
         chat.chatId,
         mode === 'standard'
           ? { mode }
-          : { mode, coordinatorAppId, workerAppIds: [...workerAppIds], progressCard },
+          : { mode, coordinatorAppId, workerAppIds: [...workerAppIds], autoEnrollWorkers, progressCard },
       );
       const nextCoordinator = response.config.coordinatorAppId ?? coordinatorAppId;
       const nextWorkers = response.config.workerAppIds ?? [];
+      const nextAutoEnrollWorkers = response.config.autoEnrollWorkers === true;
       const nextProgressCard = response.config.progressCard ?? progressCard;
+      setAutoEnrollWorkers(nextAutoEnrollWorkers);
       setProgressCard(nextProgressCard);
-      savedSignatureRef.current = collaborationModeSignature(response.config.mode, nextCoordinator, nextWorkers, nextProgressCard);
+      savedSignatureRef.current = collaborationModeSignature(
+        response.config.mode, nextCoordinator, nextWorkers, nextAutoEnrollWorkers, nextProgressCard,
+      );
       setRuntime(response.project);
       setStatus(response.cardRefresh === 'deferred'
         ? { text: tr('groups.projectModeSavedCardDeferred'), tone: 'warn' }
@@ -1423,6 +1434,22 @@ export function ProjectGroupModeSection(props: {
                 </label>
               ))}
             </div>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                data-project-auto-enroll-workers={chat.chatId}
+                checked={autoEnrollWorkers}
+                disabled={props.disabled || saving}
+                onChange={event => {
+                  setAutoEnrollWorkers(event.currentTarget.checked);
+                  setStatus(null);
+                }}
+              />
+              <span className="checkbox-row-main">
+                <strong>{tr('groups.projectAutoEnrollWorkers')}</strong>
+                <small>{tr('groups.projectAutoEnrollWorkersHelp')}</small>
+              </span>
+            </label>
           </div>
           <section className="g-project-role-config" aria-labelledby={`project-role-config-${chat.chatId}`}>
             <header>

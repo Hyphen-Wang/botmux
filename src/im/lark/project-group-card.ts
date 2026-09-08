@@ -111,6 +111,80 @@ function heroElement(label: string, content: string, color: string, background: 
   };
 }
 
+export interface ProjectGroupOnboardingCardInput {
+  coordinatorName: string;
+  workerNames: string[];
+  updatedAt: string;
+}
+
+/** Build the durable pre-project guide that occupies the same pinned message
+ * later reused by the live project card. It deliberately contains no buttons:
+ * starting is a normal top-level message to the coordinator, so the first
+ * conversation can remain exploratory instead of requiring a fixed goal. */
+export function buildProjectGroupOnboardingCard(input: ProjectGroupOnboardingCardInput): Record<string, unknown> {
+  const coordinatorName = truncate(input.coordinatorName || '主控 Bot', 40);
+  const workerNames = input.workerNames.map(name => truncate(name, 32)).filter(Boolean).slice(0, 8);
+  const workers = workerNames.length > 0 ? workerNames.join('、') : '尚未配置 Worker';
+  const updated = new Date(input.updatedAt);
+  const updatedLabel = Number.isNaN(updated.getTime())
+    ? input.updatedAt
+    : new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(updated).replace('/', '-');
+  const elements: Array<Record<string, unknown>> = [
+    heroElement('下一步', `在群消息顶层 @${coordinatorName}，从讨论或执行开始`, 'indigo', 'indigo-50'),
+    {
+      tag: 'interactive_container', behaviors: [], width: 'fill', height: 'auto', corner_radius: '8px',
+      has_border: false, disabled: false, background_style: 'blue-50', padding: '10px 12px 10px 12px',
+      direction: 'vertical', horizontal_spacing: '4px', vertical_spacing: '4px',
+      horizontal_align: 'left', vertical_align: 'top', margin: '6px 0px 0px 0px',
+      elements: [{
+        tag: 'markdown', text_align: 'left', text_size: 'normal',
+        content: `<font color='blue'>**先讨论**</font>\n还没有明确目标时：\n> @${escapeMarkdown(coordinatorName)} 我想讨论「……」，先帮我澄清问题、约束和下一步。`,
+      }],
+    },
+    {
+      tag: 'interactive_container', behaviors: [], width: 'fill', height: 'auto', corner_radius: '8px',
+      has_border: false, disabled: false, background_style: 'green-50', padding: '10px 12px 10px 12px',
+      direction: 'vertical', horizontal_spacing: '4px', vertical_spacing: '4px',
+      horizontal_align: 'left', vertical_align: 'top', margin: '6px 0px 0px 0px',
+      elements: [{
+        tag: 'markdown', text_align: 'left', text_size: 'normal',
+        content: `<font color='green'>**直接执行**</font>\n目标已经清楚时：\n> @${escapeMarkdown(coordinatorName)} 启动「……」项目，目标是……，请拆解并推进。`,
+      }],
+    },
+    {
+      tag: 'markdown', text_align: 'left', text_size: 'normal', margin: '8px 0px 0px 0px',
+      content: `<font color='purple'>**协作配置**</font>\n主控：**${escapeMarkdown(coordinatorName)}**\nWorker：${escapeMarkdown(workers)}`,
+    },
+    { tag: 'hr', margin: '12px 0px 0px 0px' },
+    {
+      tag: 'markdown', text_align: 'left', text_size: 'small', margin: '8px 0px 0px 0px',
+      content: `<font color='grey'>配置源：Dashboard · 项目尚未初始化 · 更新于 ${updatedLabel}</font>`,
+    },
+  ];
+  return {
+    schema: '2.0',
+    config: {
+      update_multi: true, compact_width: false, enable_forward: true,
+      streaming_mode: false, width_mode: 'fill',
+      summary: { content: '项目群已就绪 · 等待开始讨论或执行' },
+    },
+    header: {
+      template: 'blue',
+      title: { tag: 'plain_text', content: '项目群已就绪', text_align: 'left' },
+      subtitle: { tag: 'plain_text', content: '普通群项目协作模式', text_align: 'left' },
+      text_tag_list: [{
+        tag: 'text_tag', text: { tag: 'plain_text', content: '待启动', text_align: 'left' }, color: 'blue',
+      }],
+    },
+    body: {
+      direction: 'vertical', horizontal_spacing: '8px', vertical_spacing: '8px',
+      horizontal_align: 'left', vertical_align: 'top', padding: '12px 12px 12px 12px', elements,
+    },
+  };
+}
+
 function planSurface(
   label: string,
   color: string,

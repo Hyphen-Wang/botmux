@@ -2150,6 +2150,55 @@ ipcRoute('POST', '/api/sessions/:sessionId/project', async (req, res, params) =>
   }
 });
 
+/** Trusted Dashboard creates or refreshes the one pinned pre-project guide. */
+ipcRoute('POST', '/api/project-groups/:chatId/ensure-onboarding-card', async (req, res, params) => {
+  const chatId = decodeURIComponent(params.chatId);
+  if (!/^oc_[A-Za-z0-9_-]{1,128}$/.test(chatId)) {
+    return jsonRes(res, 400, { ok: false, error: 'invalid_chat_id' });
+  }
+  const mode = readGroupCollaborationMode(config.session.dataDir, chatId);
+  if (mode?.mode !== 'project' || mode.coordinatorAppId !== cachedLarkAppId) {
+    return jsonRes(res, 409, { ok: false, error: 'project_coordinator_mismatch' });
+  }
+  const body = await readJsonBody<Record<string, unknown>>(req).catch(() => undefined);
+  const coordinatorName = typeof body?.coordinatorName === 'string' ? body.coordinatorName.trim().slice(0, 80) : '';
+  const workerNames = Array.isArray(body?.workerNames)
+    ? body.workerNames.filter((name): name is string => typeof name === 'string')
+      .map(name => name.trim().slice(0, 80)).filter(Boolean).slice(0, 64)
+    : [];
+  if (!coordinatorName) return jsonRes(res, 400, { ok: false, error: 'coordinator_name_required' });
+  try {
+    const card = await projectCoordinator.ensureOnboardingCard({
+      dataDir: config.session.dataDir, chatId, larkAppId: cachedLarkAppId,
+    }, { coordinatorName, workerNames });
+    return jsonRes(res, 200, { ok: true, card });
+  } catch (error) {
+    return jsonRes(res, 502, { ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/** Trusted Dashboard unpins and forgets the guide when project mode is disabled
+ * or ownership moves to another coordinator. */
+ipcRoute('POST', '/api/project-groups/:chatId/clear-onboarding-card', async (_req, res, params) => {
+  const chatId = decodeURIComponent(params.chatId);
+  if (!/^oc_[A-Za-z0-9_-]{1,128}$/.test(chatId)) {
+    return jsonRes(res, 400, { ok: false, error: 'invalid_chat_id' });
+  }
+  const mode = readGroupCollaborationMode(config.session.dataDir, chatId);
+  if (!mode?.onboardingCard) return jsonRes(res, 200, { ok: true, cleared: false });
+  if (mode.onboardingCard.larkAppId !== cachedLarkAppId) {
+    return jsonRes(res, 409, { ok: false, error: 'project_onboarding_coordinator_mismatch' });
+  }
+  try {
+    const cleared = await projectCoordinator.clearOnboardingCard({
+      dataDir: config.session.dataDir, chatId, larkAppId: cachedLarkAppId,
+    });
+    return jsonRes(res, 200, { ok: true, cleared });
+  } catch (error) {
+    return jsonRes(res, 502, { ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 /** Trusted Dashboard refresh after a group-level card presentation change. */
 ipcRoute('POST', '/api/project-groups/:chatId/refresh-card', async (_req, res, params) => {
   const chatId = decodeURIComponent(params.chatId);

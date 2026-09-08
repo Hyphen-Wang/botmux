@@ -7,6 +7,7 @@ import {
   evaluateProjectDispatchPolicy,
   readGroupCollaborationMode,
   writeGroupCollaborationMode,
+  writeProjectOnboardingCard,
 } from '../src/services/group-collaboration-mode-store.js';
 import { renderProjectGroupModeBlock } from '../src/core/session-manager.js';
 
@@ -24,8 +25,8 @@ function fixture() {
       chatId: 'oc_project',
       chatMode: 'group',
       memberBots: [
-        { larkAppId: 'cli_coordinator', inChat: true },
-        { larkAppId: 'cli_worker', inChat: true },
+        { larkAppId: 'cli_coordinator', botName: 'nodex', inChat: true },
+        { larkAppId: 'cli_worker', botName: 'Seed Bot', inChat: true },
         { larkAppId: 'cli_elsewhere', inChat: false },
       ],
     }],
@@ -34,6 +35,26 @@ function fixture() {
 }
 
 describe('project group mode dashboard API', () => {
+  it('creates the waiting-to-start guide for a configured group without project content', async () => {
+    const f = fixture();
+    const ensureOnboardingCard = vi.fn(async (chatId: string, coordinatorAppId: string) => {
+      await writeProjectOnboardingCard(f.dataDir, chatId, {
+        messageId: 'om_guide', larkAppId: coordinatorAppId, pinned: true,
+        createdAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z',
+      });
+    });
+    const result = await putProjectGroupMode('oc_project', {
+      mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+    }, { ...f, ensureOnboardingCard });
+    expect(result.status).toBe(200);
+    expect(result.body.cardRefresh).toBe('updated');
+    expect(ensureOnboardingCard).toHaveBeenCalledWith('oc_project', 'cli_coordinator', {
+      coordinatorName: 'nodex', workerNames: ['Seed Bot'],
+    });
+    expect(result.body.config).not.toHaveProperty('onboardingCard');
+    expect(readGroupCollaborationMode(f.dataDir, 'oc_project')?.onboardingCard?.messageId).toBe('om_guide');
+  });
+
   it('stores only group nature and bot policy, never project content', async () => {
     const f = fixture();
     const result = await putProjectGroupMode('oc_project', {
@@ -116,6 +137,26 @@ describe('project group mode dashboard API', () => {
     expect(restored.body.config).toMatchObject({
       mode: 'project', progressCard: { templateId: 'compact-list', sections: ['workstreams'] },
     });
+  });
+
+  it('unpins the waiting guide before switching back to standard mode', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: 'oc_project', mode: 'project', coordinatorAppId: 'cli_coordinator', workerAppIds: ['cli_worker'],
+    });
+    await writeProjectOnboardingCard(f.dataDir, 'oc_project', {
+      messageId: 'om_guide', larkAppId: 'cli_coordinator', pinned: true,
+      createdAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z',
+    });
+    const clearOnboardingCard = vi.fn(async (chatId: string) => {
+      await writeProjectOnboardingCard(f.dataDir, chatId, undefined);
+    });
+    const result = await putProjectGroupMode('oc_project', { mode: 'standard' }, {
+      ...f, clearOnboardingCard,
+    });
+    expect(result.status).toBe(200);
+    expect(clearOnboardingCard).toHaveBeenCalledWith('oc_project', 'cli_coordinator');
+    expect(readGroupCollaborationMode(f.dataDir, 'oc_project')).not.toHaveProperty('onboardingCard');
   });
 });
 

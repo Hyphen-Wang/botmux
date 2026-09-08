@@ -8,6 +8,14 @@ export const GROUP_COLLABORATION_MODE_STORE_FILE = 'group-collaboration-modes.js
 
 export type GroupCollaborationMode = 'standard' | 'project';
 
+export interface ProjectOnboardingCardState {
+  messageId: string;
+  larkAppId: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface GroupCollaborationModeConfig {
   schemaVersion: 1;
   chatId: string;
@@ -15,6 +23,8 @@ export interface GroupCollaborationModeConfig {
   coordinatorAppId?: string;
   workerAppIds?: string[];
   progressCard?: ProjectProgressCardConfig;
+  /** Internal projection state for the pinned "waiting to start" guide. */
+  onboardingCard?: ProjectOnboardingCardState;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,10 +116,36 @@ export async function writeGroupCollaborationMode(
           }
         : {}),
       ...(progressCard ? { progressCard: structuredClone(progressCard) } : {}),
+      ...(current?.onboardingCard ? { onboardingCard: structuredClone(current.onboardingCard) } : {}),
       createdAt: current?.createdAt ?? now,
       updatedAt: now,
     };
     registry.configs[input.chatId] = result;
+    writeRegistry(path, registry);
+  });
+  return structuredClone(result);
+}
+
+/** Persist or clear the internal guide-card projection without rewriting the
+ * user-owned collaboration policy. */
+export async function writeProjectOnboardingCard(
+  dataDir: string,
+  chatId: string,
+  card: ProjectOnboardingCardState | undefined,
+): Promise<GroupCollaborationModeConfig> {
+  const path = registryPath(dataDir);
+  let result!: GroupCollaborationModeConfig;
+  await withFileLock(path, async () => {
+    const registry = readRegistry(path);
+    const current = registry.configs[chatId];
+    if (!current) throw new Error('group_collaboration_mode_not_found');
+    if (card && (current.mode !== 'project' || current.coordinatorAppId !== card.larkAppId)) {
+      throw new Error('project_onboarding_coordinator_mismatch');
+    }
+    result = { ...current, updatedAt: new Date().toISOString() };
+    if (card) result.onboardingCard = structuredClone(card);
+    else delete result.onboardingCard;
+    registry.configs[chatId] = result;
     writeRegistry(path, registry);
   });
   return structuredClone(result);

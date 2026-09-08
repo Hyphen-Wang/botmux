@@ -1342,7 +1342,7 @@ export function ProjectGroupModeSection(props: {
       setProgressCard(nextProgressCard);
       savedSignatureRef.current = collaborationModeSignature(response.config.mode, nextCoordinator, nextWorkers, nextProgressCard);
       setRuntime(response.project);
-      setStatus(response.cardRefresh === 'deferred' && response.project
+      setStatus(response.cardRefresh === 'deferred'
         ? { text: tr('groups.projectModeSavedCardDeferred'), tone: 'warn' }
         : { text: tr('groups.projectModeSaved'), tone: 'ok' });
       try {

@@ -1691,6 +1691,32 @@ const groupsActionDeps: GroupsActionDeps = {
 const projectGroupModeApiDeps = {
   dataDir: config.session.dataDir,
   groups: () => groupsMatrixSnapshot.get(),
+  ensureOnboardingCard: async (
+    chatId: string,
+    coordinatorAppId: string,
+    input: { coordinatorName: string; workerNames: string[] },
+  ): Promise<void> => {
+    const response = await proxyToDaemon(
+      coordinatorAppId,
+      `/api/project-groups/${encodeURIComponent(chatId)}/ensure-onboarding-card`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    );
+    const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  },
+  clearOnboardingCard: async (chatId: string, coordinatorAppId: string): Promise<void> => {
+    const response = await proxyToDaemon(
+      coordinatorAppId,
+      `/api/project-groups/${encodeURIComponent(chatId)}/clear-onboarding-card`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  },
   refreshProjectCard: async (chatId: string, coordinatorAppId: string): Promise<ProjectGroupState> => {
     const response = await proxyToDaemon(
       coordinatorAppId,

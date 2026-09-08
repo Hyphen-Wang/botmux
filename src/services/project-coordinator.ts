@@ -1,4 +1,8 @@
-import { buildProjectGroupCard } from '../im/lark/project-group-card.js';
+import {
+  buildProjectGroupCard,
+  buildProjectGroupOnboardingCard,
+  type ProjectGroupOnboardingCardInput,
+} from '../im/lark/project-group-card.js';
 import type { Brand } from '../im/lark/lark-hosts.js';
 import {
   mutateProjectGroup,
@@ -7,12 +11,17 @@ import {
   type ProjectGroupStatus,
   type ProjectWorkstreamStatus,
 } from './project-group-store.js';
-import { readGroupCollaborationMode } from './group-collaboration-mode-store.js';
+import {
+  readGroupCollaborationMode,
+  writeProjectOnboardingCard,
+  type ProjectOnboardingCardState,
+} from './group-collaboration-mode-store.js';
 
 export interface ProjectCoordinatorTransport {
   sendCard(larkAppId: string, chatId: string, cardJson: string): Promise<string>;
   updateCard(larkAppId: string, messageId: string, cardJson: string): Promise<void>;
   pinMessage(larkAppId: string, messageId: string): Promise<boolean>;
+  unpinMessage(larkAppId: string, messageId: string): Promise<boolean>;
   resolveThreadId(larkAppId: string, dispatchRoot: string): Promise<string | null>;
   isMessageWithdrawn(error: unknown): boolean;
   brand(larkAppId: string): Brand;
@@ -146,6 +155,60 @@ function statusProgress(status: ProjectWorkstreamStatus, explicit?: number, curr
 
 export class ProjectCoordinator {
   constructor(private readonly transport: ProjectCoordinatorTransport) {}
+
+  ensureOnboardingCard(
+    context: Pick<ProjectCoordinatorContext, 'dataDir' | 'chatId' | 'larkAppId'>,
+    input: Omit<ProjectGroupOnboardingCardInput, 'updatedAt'>,
+  ): Promise<ProjectOnboardingCardState | null> {
+    return queued(`${context.dataDir}:${context.chatId}`, async () => {
+      if (readProjectGroup(context.dataDir, context.chatId)) return null;
+      const mode = readGroupCollaborationMode(context.dataDir, context.chatId);
+      if (mode?.mode !== 'project' || mode.coordinatorAppId !== context.larkAppId) {
+        throw new Error('project_coordinator_mismatch');
+      }
+      const now = nowIso();
+      const cardJson = JSON.stringify(buildProjectGroupOnboardingCard({ ...input, updatedAt: now }));
+      const current = mode.onboardingCard;
+      if (current) {
+        if (current.larkAppId !== context.larkAppId) throw new Error('project_onboarding_coordinator_mismatch');
+        try {
+          await this.transport.updateCard(context.larkAppId, current.messageId, cardJson);
+          const next = { ...current, updatedAt: now };
+          await writeProjectOnboardingCard(context.dataDir, context.chatId, next);
+          return next;
+        } catch (error) {
+          if (!this.transport.isMessageWithdrawn(error)) throw error;
+          await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
+        }
+      }
+      const messageId = await this.transport.sendCard(context.larkAppId, context.chatId, cardJson);
+      const pinned = await this.transport.pinMessage(context.larkAppId, messageId);
+      const created: ProjectOnboardingCardState = {
+        messageId, larkAppId: context.larkAppId, pinned, createdAt: now, updatedAt: now,
+      };
+      await writeProjectOnboardingCard(context.dataDir, context.chatId, created);
+      return created;
+    });
+  }
+
+  clearOnboardingCard(
+    context: Pick<ProjectCoordinatorContext, 'dataDir' | 'chatId' | 'larkAppId'>,
+  ): Promise<boolean> {
+    return queued(`${context.dataDir}:${context.chatId}`, async () => {
+      const current = readGroupCollaborationMode(context.dataDir, context.chatId)?.onboardingCard;
+      if (!current) return false;
+      if (current.larkAppId !== context.larkAppId) throw new Error('project_onboarding_coordinator_mismatch');
+      if (current.pinned) {
+        try {
+          await this.transport.unpinMessage(context.larkAppId, current.messageId);
+        } catch (error) {
+          if (!this.transport.isMessageWithdrawn(error)) throw error;
+        }
+      }
+      await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
+      return true;
+    });
+  }
 
   run(context: ProjectCoordinatorContext, action: ProjectCoordinatorAction): Promise<ProjectGroupState> {
     return queued(`${context.dataDir}:${context.chatId}`, async () => {
@@ -325,7 +388,8 @@ export class ProjectCoordinator {
         return current;
       }))!;
     }
-    const cardConfig = readGroupCollaborationMode(context.dataDir, context.chatId)?.progressCard;
+    const mode = readGroupCollaborationMode(context.dataDir, context.chatId);
+    const cardConfig = mode?.progressCard;
     const cardJson = JSON.stringify(buildProjectGroupCard(project, this.transport.brand(project.larkAppId), cardConfig));
     if (project.card?.messageId) {
       try {
@@ -339,6 +403,25 @@ export class ProjectCoordinator {
         return project;
       } catch (error) {
         if (!this.transport.isMessageWithdrawn(error)) throw error;
+      }
+    }
+    const onboarding = mode?.onboardingCard;
+    if (onboarding && onboarding.larkAppId === project.larkAppId) {
+      try {
+        await this.transport.updateCard(project.larkAppId, onboarding.messageId, cardJson);
+        const pinned = onboarding.pinned || await this.transport.pinMessage(project.larkAppId, onboarding.messageId);
+        project = (await mutateProjectGroup(context.dataDir, context.chatId, current => {
+          if (!current) throw new Error('project_not_found');
+          current.revision += 1;
+          current.updatedAt = nowIso();
+          current.card = { messageId: onboarding.messageId, pinned, updatedAt: current.updatedAt };
+          return current;
+        }))!;
+        await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
+        return project;
+      } catch (error) {
+        if (!this.transport.isMessageWithdrawn(error)) throw error;
+        await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
       }
     }
     const messageId = await this.transport.sendCard(project.larkAppId, project.chatId, cardJson);

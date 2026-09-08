@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectCoordinator, type ProjectCoordinatorTransport } from '../src/services/project-coordinator.js';
 import { readProjectGroup } from '../src/services/project-group-store.js';
-import { writeGroupCollaborationMode } from '../src/services/group-collaboration-mode-store.js';
+import {
+  readGroupCollaborationMode,
+  writeGroupCollaborationMode,
+} from '../src/services/group-collaboration-mode-store.js';
 import { parseProjectArgs } from '../src/cli/project-args.js';
 
 const roots: string[] = [];
@@ -21,6 +24,7 @@ function fixture() {
     sendCard: vi.fn(async (_appId, _chatId, cardJson) => { cards.push(cardJson); return 'om_card_1'; }),
     updateCard: vi.fn(async (_appId, _messageId, cardJson) => { cards.push(cardJson); }),
     pinMessage: vi.fn(async () => true),
+    unpinMessage: vi.fn(async () => true),
     resolveThreadId: vi.fn(async (_appId, root) => root === 'om_subtask' ? 'omt_topic' : null),
     isMessageWithdrawn: error => error instanceof Error && error.message === 'withdrawn',
     brand: () => 'feishu',
@@ -33,6 +37,52 @@ function fixture() {
 }
 
 describe('project group mode', () => {
+  it('publishes one onboarding guide and reuses its pinned message when the project starts', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: f.context.chatId, mode: 'project', coordinatorAppId: f.context.larkAppId,
+      workerAppIds: ['cli_worker'],
+    });
+    const first = await f.coordinator.ensureOnboardingCard(f.context, {
+      coordinatorName: 'nodex', workerNames: ['Seed Bot'],
+    });
+    expect(first).toMatchObject({ messageId: 'om_card_1', pinned: true, larkAppId: 'cli_coordinator' });
+    expect(f.transport.sendCard).toHaveBeenCalledTimes(1);
+    expect(f.transport.pinMessage).toHaveBeenCalledTimes(1);
+    expect(f.cards[0]).toContain('项目群已就绪');
+    expect(f.cards[0]).toContain('先讨论');
+    expect(f.cards[0]).toContain('直接执行');
+    expect(readGroupCollaborationMode(f.dataDir, f.context.chatId)?.onboardingCard?.messageId).toBe('om_card_1');
+
+    await f.coordinator.ensureOnboardingCard(f.context, {
+      coordinatorName: 'nodex', workerNames: ['Seed Bot', 'GLM Bot'],
+    });
+    expect(f.transport.sendCard).toHaveBeenCalledTimes(1);
+    expect(f.transport.updateCard).toHaveBeenCalledWith('cli_coordinator', 'om_card_1', expect.stringContaining('GLM Bot'));
+
+    const project = await f.coordinator.run(f.context, {
+      action: 'init', title: '引导卡接管验收', goal: '复用同一张置顶卡进入项目',
+    });
+    expect(project.card).toMatchObject({ messageId: 'om_card_1', pinned: true });
+    expect(f.transport.sendCard).toHaveBeenCalledTimes(1);
+    expect(f.cards.at(-1)).toContain('引导卡接管验收');
+    expect(readGroupCollaborationMode(f.dataDir, f.context.chatId)?.onboardingCard).toBeUndefined();
+  });
+
+  it('unpins and clears an unused onboarding guide when project mode is disabled', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: f.context.chatId, mode: 'project', coordinatorAppId: f.context.larkAppId,
+      workerAppIds: ['cli_worker'],
+    });
+    await f.coordinator.ensureOnboardingCard(f.context, {
+      coordinatorName: 'nodex', workerNames: ['Seed Bot'],
+    });
+    expect(await f.coordinator.clearOnboardingCard(f.context)).toBe(true);
+    expect(f.transport.unpinMessage).toHaveBeenCalledWith('cli_coordinator', 'om_card_1');
+    expect(readGroupCollaborationMode(f.dataDir, f.context.chatId)?.onboardingCard).toBeUndefined();
+  });
+
   it('creates one pinned plan-list projection backed by a private durable store', async () => {
     const f = fixture();
     const project = await f.coordinator.run(f.context, {

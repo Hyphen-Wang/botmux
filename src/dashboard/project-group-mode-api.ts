@@ -21,6 +21,12 @@ export interface ProjectGroupModeApiDeps {
   writeConfig?: typeof writeGroupCollaborationMode;
   readProject?: (dataDir: string, chatId: string) => ProjectGroupState | undefined;
   refreshProjectCard?: (chatId: string, coordinatorAppId: string) => Promise<ProjectGroupState>;
+  ensureOnboardingCard?: (
+    chatId: string,
+    coordinatorAppId: string,
+    input: { coordinatorName: string; workerNames: string[] },
+  ) => Promise<unknown>;
+  clearOnboardingCard?: (chatId: string, coordinatorAppId: string) => Promise<void>;
 }
 
 export interface ProjectRuntimeSummary {
@@ -63,9 +69,12 @@ function responseBody(
   project: ProjectGroupState | undefined,
   extra?: Record<string, unknown>,
 ): Record<string, unknown> {
-  const effectiveConfig = config?.mode === 'project'
-    ? { ...config, progressCard: resolveProjectProgressCardConfig(config.progressCard) }
-    : config ?? { schemaVersion: 1, chatId, mode: 'standard' };
+  const publicConfig = config
+    ? (({ onboardingCard: _onboardingCard, ...rest }) => rest)(config)
+    : undefined;
+  const effectiveConfig = publicConfig?.mode === 'project'
+    ? { ...publicConfig, progressCard: resolveProjectProgressCardConfig(publicConfig.progressCard) }
+    : publicConfig ?? { schemaVersion: 1, chatId, mode: 'standard' };
   return {
     ok: true,
     config: effectiveConfig,
@@ -110,6 +119,15 @@ export async function putProjectGroupMode(
   const currentConfig = (deps.readConfig ?? readGroupCollaborationMode)(deps.dataDir, chatId);
   if (record.mode === 'standard') {
     if (record.progressCard !== undefined) return bad('progress_card_requires_project_mode');
+    if (currentConfig?.onboardingCard && deps.clearOnboardingCard) {
+      try {
+        await deps.clearOnboardingCard(chatId, currentConfig.onboardingCard.larkAppId);
+      } catch (error) {
+        return bad('onboarding_card_cleanup_failed', 502, {
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const config = await writeConfig(deps.dataDir, { chatId, mode: 'standard' });
     return { status: 200, body: responseBody(chatId, config, readProject(deps.dataDir, chatId)) };
   }
@@ -143,6 +161,16 @@ export async function putProjectGroupMode(
   if (project && project.larkAppId !== coordinatorAppId) {
     return bad('project_coordinator_conflict', 409, { currentCoordinatorAppId: project.larkAppId });
   }
+  if (currentConfig?.onboardingCard && currentConfig.onboardingCard.larkAppId !== coordinatorAppId) {
+    if (!deps.clearOnboardingCard) return bad('onboarding_card_cleanup_unavailable', 503);
+    try {
+      await deps.clearOnboardingCard(chatId, currentConfig.onboardingCard.larkAppId);
+    } catch (error) {
+      return bad('onboarding_card_cleanup_failed', 502, {
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   const config = await writeConfig(deps.dataDir, {
     chatId,
     mode: 'project',
@@ -150,8 +178,35 @@ export async function putProjectGroupMode(
     workerAppIds,
     progressCard: progressCardParsed.value,
   });
-  if (!project || !deps.refreshProjectCard) {
-    return { status: 200, body: responseBody(chatId, config, project, { cardRefresh: project ? 'deferred' : 'not_needed' }) };
+  if (!project) {
+    if (!deps.ensureOnboardingCard) {
+      return { status: 200, body: responseBody(chatId, config, project, { cardRefresh: 'deferred' }) };
+    }
+    const members = (Array.isArray(chat.memberBots) ? chat.memberBots : [])
+      .filter(member => member && typeof member === 'object')
+      .map(member => member as Record<string, unknown>);
+    const nameByAppId = new Map(members.map(member => [
+      typeof member.larkAppId === 'string' ? member.larkAppId : '',
+      typeof member.botName === 'string' && member.botName.trim() ? member.botName.trim() : undefined,
+    ]));
+    try {
+      await deps.ensureOnboardingCard(chatId, coordinatorAppId, {
+        coordinatorName: nameByAppId.get(coordinatorAppId) ?? coordinatorAppId,
+        workerNames: workerAppIds.map(appId => nameByAppId.get(appId) ?? appId),
+      });
+      return { status: 200, body: responseBody(chatId, config, project, { cardRefresh: 'updated' }) };
+    } catch (error) {
+      return {
+        status: 200,
+        body: responseBody(chatId, config, project, {
+          cardRefresh: 'deferred',
+          cardRefreshError: error instanceof Error ? error.message : String(error),
+        }),
+      };
+    }
+  }
+  if (!deps.refreshProjectCard) {
+    return { status: 200, body: responseBody(chatId, config, project, { cardRefresh: 'deferred' }) };
   }
   try {
     const refreshed = await deps.refreshProjectCard(chatId, coordinatorAppId);

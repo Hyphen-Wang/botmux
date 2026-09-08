@@ -297,6 +297,7 @@ import { recordDispatchRegistryEntry } from './core/dispatch-registry.js';
 import { initialDispatchLifecycle } from './core/dispatch-lifecycle.js';
 import { projectCoordinator } from './services/project-coordinator-runtime.js';
 import {
+  addProjectWorkerIfNeeded,
   evaluateProjectDispatchPolicy,
   readGroupCollaborationMode,
 } from './services/group-collaboration-mode-store.js';
@@ -19034,6 +19035,18 @@ async function handleBotAdded(
     forcePrompt?: string;
   },
 ): Promise<void> {
+  try {
+    const projectConfig = await addProjectWorkerIfNeeded(config.session.dataDir, chatId, larkAppId);
+    if (projectConfig) {
+      logger.info(`[project:${chatId.substring(0, 12)}] joined bot enrolled as worker: ${larkAppId}`);
+    }
+  } catch (error) {
+    logger.warn(
+      `[project:${chatId.substring(0, 12)}] failed to enroll joined bot ${larkAppId}: `
+      + `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   const bot = getBot(larkAppId);
   const botCfg = bot.config;
   const forced = typeof opts?.forcePrompt === 'string';

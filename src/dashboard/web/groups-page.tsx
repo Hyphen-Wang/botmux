@@ -1424,6 +1424,31 @@ export function ProjectGroupModeSection(props: {
               ))}
             </div>
           </div>
+          <section className="g-project-role-config" aria-labelledby={`project-role-config-${chat.chatId}`}>
+            <header>
+              <strong id={`project-role-config-${chat.chatId}`}>{tr('groups.projectRoleConfig')}</strong>
+              <small>{tr('groups.projectRoleConfigHelp')}</small>
+            </header>
+            <div className="g-project-role-grid">
+              {members
+                .filter(member => member.larkAppId === coordinatorAppId || workerAppIds.has(member.larkAppId))
+                .map(member => {
+                  const isCoordinator = member.larkAppId === coordinatorAppId;
+                  const href = `#/roles?chatId=${encodeURIComponent(chat.chatId)}&botId=${encodeURIComponent(member.larkAppId)}`;
+                  return (
+                    <a className="g-project-role-link" href={href} key={`project-role-${member.larkAppId}`}>
+                      <span>
+                        <strong>{member.botName ?? member.larkAppId}</strong>
+                        <small>{tr(isCoordinator ? 'groups.projectRoleCoordinator' : 'groups.projectRoleWorker')}</small>
+                      </span>
+                      <em className={member.hasRole ? 'configured' : ''}>
+                        {tr(member.hasRole ? 'groups.projectRoleConfigured' : 'groups.projectRoleInherited')}
+                      </em>
+                    </a>
+                  );
+                })}
+            </div>
+          </section>
           <div className="g-project-protocol" aria-label={tr('groups.projectProtocol')}>
             <span><b>01</b>{tr('groups.projectProtocolDispatch')}</span>
             <span><b>02</b>{tr('groups.projectProtocolReport')}</span>

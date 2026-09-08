@@ -156,6 +156,23 @@ function statusProgress(status: ProjectWorkstreamStatus, explicit?: number, curr
 export class ProjectCoordinator {
   constructor(private readonly transport: ProjectCoordinatorTransport) {}
 
+  private async retireOnboardingCard(
+    context: Pick<ProjectCoordinatorContext, 'dataDir' | 'chatId' | 'larkAppId'>,
+  ): Promise<void> {
+    const current = readGroupCollaborationMode(context.dataDir, context.chatId)?.onboardingCard;
+    if (!current) return;
+    if (current.larkAppId !== context.larkAppId) throw new Error('project_onboarding_coordinator_mismatch');
+    if (current.pinned) {
+      try {
+        const unpinned = await this.transport.unpinMessage(context.larkAppId, current.messageId);
+        if (!unpinned) return;
+      } catch (error) {
+        if (!this.transport.isMessageWithdrawn(error)) throw error;
+      }
+    }
+    await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
+  }
+
   ensureOnboardingCard(
     context: Pick<ProjectCoordinatorContext, 'dataDir' | 'chatId' | 'larkAppId'>,
     input: Omit<ProjectGroupOnboardingCardInput, 'updatedAt'>,
@@ -400,30 +417,18 @@ export class ProjectCoordinator {
           current.card.updatedAt = current.updatedAt;
           return current;
         }))!;
+        // If a previous first-publish attempt persisted and pinned the active
+        // card but failed to retire the guide, retry that cleanup on refresh.
+        await this.retireOnboardingCard(context);
         return project;
       } catch (error) {
         if (!this.transport.isMessageWithdrawn(error)) throw error;
       }
     }
-    const onboarding = mode?.onboardingCard;
-    if (onboarding && onboarding.larkAppId === project.larkAppId) {
-      try {
-        await this.transport.updateCard(project.larkAppId, onboarding.messageId, cardJson);
-        const pinned = onboarding.pinned || await this.transport.pinMessage(project.larkAppId, onboarding.messageId);
-        project = (await mutateProjectGroup(context.dataDir, context.chatId, current => {
-          if (!current) throw new Error('project_not_found');
-          current.revision += 1;
-          current.updatedAt = nowIso();
-          current.card = { messageId: onboarding.messageId, pinned, updatedAt: current.updatedAt };
-          return current;
-        }))!;
-        await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
-        return project;
-      } catch (error) {
-        if (!this.transport.isMessageWithdrawn(error)) throw error;
-        await writeProjectOnboardingCard(context.dataDir, context.chatId, undefined);
-      }
-    }
+    // Starting a project must be visible at the current point in the chat.
+    // Never transform the older onboarding guide in place: publish and pin a
+    // fresh formal card first, persist it, then retire the guide. If retirement
+    // fails, its metadata remains so a later refresh can retry safely.
     const messageId = await this.transport.sendCard(project.larkAppId, project.chatId, cardJson);
     const pinned = await this.transport.pinMessage(project.larkAppId, messageId);
     project = (await mutateProjectGroup(context.dataDir, context.chatId, current => {
@@ -433,6 +438,7 @@ export class ProjectCoordinator {
       current.card = { messageId, pinned, updatedAt: current.updatedAt };
       return current;
     }))!;
+    await this.retireOnboardingCard(context);
     return project;
   }
 }

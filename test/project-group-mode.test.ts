@@ -20,8 +20,13 @@ function fixture() {
   const dataDir = mkdtempSync(join(tmpdir(), 'botmux-project-group-'));
   roots.push(dataDir);
   const cards: string[] = [];
+  let sentCards = 0;
   const transport: ProjectCoordinatorTransport = {
-    sendCard: vi.fn(async (_appId, _chatId, cardJson) => { cards.push(cardJson); return 'om_card_1'; }),
+    sendCard: vi.fn(async (_appId, _chatId, cardJson) => {
+      cards.push(cardJson);
+      sentCards += 1;
+      return `om_card_${sentCards}`;
+    }),
     updateCard: vi.fn(async (_appId, _messageId, cardJson) => { cards.push(cardJson); }),
     pinMessage: vi.fn(async () => true),
     unpinMessage: vi.fn(async () => true),
@@ -37,7 +42,7 @@ function fixture() {
 }
 
 describe('project group mode', () => {
-  it('publishes one onboarding guide and reuses its pinned message when the project starts', async () => {
+  it('replaces the onboarding guide with a fresh pinned project card when the project starts', async () => {
     const f = fixture();
     await writeGroupCollaborationMode(f.dataDir, {
       chatId: f.context.chatId, mode: 'project', coordinatorAppId: f.context.larkAppId,
@@ -61,11 +66,50 @@ describe('project group mode', () => {
     expect(f.transport.updateCard).toHaveBeenCalledWith('cli_coordinator', 'om_card_1', expect.stringContaining('GLM Bot'));
 
     const project = await f.coordinator.run(f.context, {
-      action: 'init', title: '引导卡接管验收', goal: '复用同一张置顶卡进入项目',
+      action: 'init', title: '引导卡切换验收', goal: '用新卡明确展示项目已经启动',
     });
-    expect(project.card).toMatchObject({ messageId: 'om_card_1', pinned: true });
-    expect(f.transport.sendCard).toHaveBeenCalledTimes(1);
-    expect(f.cards.at(-1)).toContain('引导卡接管验收');
+    expect(project.card).toMatchObject({ messageId: 'om_card_2', pinned: true });
+    expect(f.transport.sendCard).toHaveBeenCalledTimes(2);
+    expect(f.transport.pinMessage).toHaveBeenLastCalledWith('cli_coordinator', 'om_card_2');
+    expect(f.transport.unpinMessage).toHaveBeenCalledWith('cli_coordinator', 'om_card_1');
+    expect(f.transport.updateCard).not.toHaveBeenCalledWith(
+      'cli_coordinator',
+      'om_card_1',
+      expect.stringContaining('引导卡切换验收'),
+    );
+    expect(f.cards.at(-1)).toContain('引导卡切换验收');
+    expect(readGroupCollaborationMode(f.dataDir, f.context.chatId)?.onboardingCard).toBeUndefined();
+  });
+
+  it('retries retiring the old onboarding pin after a best-effort unpin failure', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: f.context.chatId, mode: 'project', coordinatorAppId: f.context.larkAppId,
+      workerAppIds: ['cli_worker'],
+    });
+    await f.coordinator.ensureOnboardingCard(f.context, {
+      coordinatorName: 'nodex', workerNames: ['Seed Bot'],
+    });
+    f.transport.unpinMessage = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    const started = await f.coordinator.run(f.context, {
+      action: 'init', title: '项目已启动', goal: '验证旧引导卡清理可重试',
+    });
+    expect(started.card).toMatchObject({ messageId: 'om_card_2', pinned: true });
+    expect(readProjectGroup(f.dataDir, f.context.chatId)?.card).toMatchObject({
+      messageId: 'om_card_2', pinned: true,
+    });
+    expect(readGroupCollaborationMode(f.dataDir, f.context.chatId)?.onboardingCard?.messageId).toBe('om_card_1');
+
+    const refreshed = await f.coordinator.run(f.context, { action: 'refresh' });
+    expect(refreshed.card?.messageId).toBe('om_card_2');
+    expect(f.transport.sendCard).toHaveBeenCalledTimes(2);
+    expect(f.transport.updateCard).toHaveBeenCalledWith(
+      'cli_coordinator', 'om_card_2', expect.stringContaining('项目已启动'),
+    );
+    expect(f.transport.unpinMessage).toHaveBeenCalledTimes(2);
     expect(readGroupCollaborationMode(f.dataDir, f.context.chatId)?.onboardingCard).toBeUndefined();
   });
 

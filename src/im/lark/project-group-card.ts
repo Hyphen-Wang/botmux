@@ -118,9 +118,10 @@ export interface ProjectGroupOnboardingCardInput {
 }
 
 /** Build the durable pre-project guide that occupies the same pinned message
- * later reused by the live project card. It deliberately contains no buttons:
- * starting is a normal top-level message to the coordinator, so the first
- * conversation can remain exploratory instead of requiring a fixed goal. */
+ * later reused by the live project card. Starting remains a normal top-level
+ * message so the first conversation can stay exploratory. Role configuration
+ * is exposed as a slash command because its native card is sent privately to
+ * the owner and reuses the existing `/role` storage and prompt injection. */
 export function buildProjectGroupOnboardingCard(input: ProjectGroupOnboardingCardInput): Record<string, unknown> {
   const coordinatorName = truncate(input.coordinatorName || '主控 Bot', 40);
   const workerNames = input.workerNames.map(name => truncate(name, 32)).filter(Boolean).slice(0, 8);
@@ -155,12 +156,12 @@ export function buildProjectGroupOnboardingCard(input: ProjectGroupOnboardingCar
     },
     {
       tag: 'markdown', text_align: 'left', text_size: 'normal', margin: '8px 0px 0px 0px',
-      content: `<font color='purple'>**协作配置**</font>\n主控：**${escapeMarkdown(coordinatorName)}**\nWorker：${escapeMarkdown(workers)}`,
+      content: `<font color='purple'>**协作配置**</font>\n主控：**${escapeMarkdown(coordinatorName)}**\nWorker：${escapeMarkdown(workers)}\n角色：在群顶层发送 \`@${escapeMarkdown(coordinatorName)} /project roles\``,
     },
     { tag: 'hr', margin: '12px 0px 0px 0px' },
     {
       tag: 'markdown', text_align: 'left', text_size: 'small', margin: '8px 0px 0px 0px',
-      content: `<font color='grey'>配置源：Dashboard · 项目尚未初始化 · 更新于 ${updatedLabel}</font>`,
+      content: `<font color='grey'>配置源：Botmux 项目群配置 · 项目尚未初始化 · 更新于 ${updatedLabel}</font>`,
     },
   ];
   return {

@@ -6713,6 +6713,63 @@ dialog.onboarding-dialog::backdrop {
   background: var(--surface);
 }
 
+#g-drawer .g-project-role-config {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, #7c3aed 8%);
+}
+
+#g-drawer .g-project-role-config > header {
+  display: grid;
+  gap: 3px;
+}
+
+#g-drawer .g-project-role-config > header small {
+  color: var(--muted);
+}
+
+#g-drawer .g-project-role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+#g-drawer .g-project-role-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+#g-drawer .g-project-role-link:hover {
+  border-color: #7c3aed;
+}
+
+#g-drawer .g-project-role-link > span {
+  display: grid;
+  min-width: 0;
+}
+
+#g-drawer .g-project-role-link small,
+#g-drawer .g-project-role-link em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+#g-drawer .g-project-role-link em.configured {
+  color: var(--success);
+}
+
 #g-drawer .g-project-protocol {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

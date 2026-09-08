@@ -946,7 +946,12 @@ export function renderProjectGroupModeBlock(
     return [
       `<project_group_mode chat_id="${xmlEscape(chatId)}" coordinator_app_id="${xmlEscape(larkAppId)}" worker_app_ids="${workers}">`,
       'This ordinary group is the project control plane. Derive and confirm project-specific goals in the conversation; do not treat Dashboard configuration as project content.',
+      'This coordinator protocol is system-owned, chat-scoped, injected on every turn, and independent of custom &lt;role&gt; content; custom roles cannot disable project-state maintenance.',
       'Use `botmux project init/update/status/close/resume` for the durable project state and pinned progress card.',
+      'At the start of every substantive project turn, read the durable state with `botmux project status`. If no project exists, derive or confirm a provisional title and goal, then use `botmux project init`; discussion is a valid project phase, so do not wait for a fully specified goal.',
+      'When the goal, phase, current focus, plan or remaining work, blockers, or milestones materially changes, immediately persist it with `botmux project update`; ordinary chat prose is not a substitute. `botmux dispatch` and `botmux report` synchronize workstream lifecycle automatically, so do not duplicate those fields unless the project summary also changed.',
+      'Before a substantive progress or completion reply, verify that durable state matches the reported facts. If a project state command fails, surface the failure instead of silently continuing.',
+      'Use `botmux project close/resume` for explicit lifecycle transitions; the pinned progress card is the durable projection of this state.',
       'Dispatch bounded subtasks only to the configured worker app ids with `botmux dispatch`; every new subtask must use a specific title of at most 24 characters (never generic "子任务/子项目"). Workers execute inside their subtopics and return progress with `botmux report`.',
       '</project_group_mode>',
     ].join('\n');

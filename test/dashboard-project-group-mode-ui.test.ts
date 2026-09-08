@@ -80,6 +80,8 @@ describe('Dashboard project group mode section', () => {
     expect(requestBody).not.toHaveProperty('progress');
     expect(onSaved).toHaveBeenCalledTimes(1);
     expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
+    const roleLink = renderer.root.findAllByType('a').find(link => String(link.props.href).includes('botId=cli_coordinator'));
+    expect(roleLink?.props.href).toContain('#/roles?chatId=oc_project');
   });
 
   it('shows current project as a read-only runtime summary', async () => {

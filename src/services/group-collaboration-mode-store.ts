@@ -126,6 +126,45 @@ export async function writeGroupCollaborationMode(
   return structuredClone(result);
 }
 
+/** Enroll a Bot that has just joined an existing project group.
+ *
+ * This is intentionally independent from the Bot's auto-start-on-join setting:
+ * joining the project roster is control-plane state, while auto-start decides
+ * whether the Bot should immediately create a conversation session.
+ */
+export async function addProjectWorkerIfNeeded(
+  dataDir: string,
+  chatId: string,
+  larkAppId: string,
+): Promise<GroupCollaborationModeConfig | undefined> {
+  const workerAppId = larkAppId.trim();
+  if (!workerAppId) return undefined;
+
+  const path = registryPath(dataDir);
+  let result: GroupCollaborationModeConfig | undefined;
+  await withFileLock(path, async () => {
+    const registry = readRegistry(path);
+    const current = registry.configs[chatId];
+    if (
+      !current
+      || current.mode !== 'project'
+      || current.coordinatorAppId === workerAppId
+      || (current.workerAppIds ?? []).includes(workerAppId)
+    ) {
+      return;
+    }
+
+    result = {
+      ...current,
+      workerAppIds: [...(current.workerAppIds ?? []), workerAppId],
+      updatedAt: new Date().toISOString(),
+    };
+    registry.configs[chatId] = result;
+    writeRegistry(path, registry);
+  });
+  return result ? structuredClone(result) : undefined;
+}
+
 /** Persist or clear the internal guide-card projection without rewriting the
  * user-owned collaboration policy. */
 export async function writeProjectOnboardingCard(

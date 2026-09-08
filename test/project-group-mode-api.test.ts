@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProjectGroupMode, putProjectGroupMode } from '../src/dashboard/project-group-mode-api.js';
 import {
+  addProjectWorkerIfNeeded,
   evaluateProjectDispatchPolicy,
   readGroupCollaborationMode,
   writeGroupCollaborationMode,
@@ -214,6 +215,42 @@ describe('project dispatch policy', () => {
   });
 });
 
+describe('project worker membership sync', () => {
+  it('atomically adds newly joined local bots without losing existing project configuration', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, {
+      chatId: 'oc_project', mode: 'project', coordinatorAppId: 'cli_coordinator',
+      workerAppIds: ['cli_worker'],
+      progressCard: {
+        schemaVersion: 1, templateId: 'compact-list', sections: ['workstreams'], milestonesExpanded: false,
+      },
+    });
+
+    await Promise.all([
+      addProjectWorkerIfNeeded(f.dataDir, 'oc_project', 'cli_new_a'),
+      addProjectWorkerIfNeeded(f.dataDir, 'oc_project', 'cli_new_b'),
+    ]);
+
+    const config = readGroupCollaborationMode(f.dataDir, 'oc_project');
+    expect(config).toMatchObject({
+      coordinatorAppId: 'cli_coordinator',
+      progressCard: { templateId: 'compact-list', sections: ['workstreams'] },
+    });
+    expect(config?.workerAppIds).toHaveLength(3);
+    expect(new Set(config?.workerAppIds)).toEqual(new Set(['cli_worker', 'cli_new_a', 'cli_new_b']));
+    expect(await addProjectWorkerIfNeeded(f.dataDir, 'oc_project', 'cli_new_a')).toBeUndefined();
+    expect(await addProjectWorkerIfNeeded(f.dataDir, 'oc_project', 'cli_coordinator')).toBeUndefined();
+  });
+
+  it('does not enroll a bot when the group is not in project mode', async () => {
+    const f = fixture();
+    await writeGroupCollaborationMode(f.dataDir, { chatId: 'oc_project', mode: 'standard' });
+
+    expect(await addProjectWorkerIfNeeded(f.dataDir, 'oc_project', 'cli_new')).toBeUndefined();
+    expect(readGroupCollaborationMode(f.dataDir, 'oc_project')?.workerAppIds).toBeUndefined();
+  });
+});
+
 describe('project coordinator prompt context', () => {
   it('injects the fixed project protocol only for the configured coordinator', async () => {
     const f = fixture();
@@ -223,6 +260,10 @@ describe('project coordinator prompt context', () => {
     const coordinator = renderProjectGroupModeBlock('cli_coordinator', 'oc_project', f.dataDir);
     expect(coordinator).toContain('<project_group_mode');
     expect(coordinator).toContain('botmux project init/update/status/close/resume');
+    expect(coordinator).toContain('independent of custom &lt;role&gt; content');
+    expect(coordinator).toContain('At the start of every substantive project turn');
+    expect(coordinator).toContain('immediately persist it with `botmux project update`');
+    expect(coordinator).toContain('discussion is a valid project phase');
     expect(coordinator).toContain('worker_app_ids="cli_worker"');
     expect(coordinator).toContain('specific title of at most 24 characters');
     expect(renderProjectGroupModeBlock('cli_worker', 'oc_project', f.dataDir)).toBe('');
